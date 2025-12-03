@@ -12,71 +12,30 @@
 #include "render/SkeletalMesh.h"
 
 
-static gl::SkinnedMesh skinned_mesh;
+// static gl::SkinnedMesh skinned_mesh;
+// static gl::Transform skinned_transform;
 
-static gl::Transform skinned_transform;
 static gl::DrawMesh obj_mesh;
 static gl::Transform obj_transform;
-
-static gl::DrawMesh spider;
-static gl::Transform spider_transform;
-
-// New: draw mesh built from CoACD JSON
 static gl::DrawMesh coacd_mesh;
-static gl::Transform coacd_transform;
 
 Core::Core() : m_camera(std::make_shared<gl::Camera>()), m_light(std::make_shared<gl::Light>()) {
 
     m_light->position = glm::vec3(0, 5, 0);
-    auto object = Object("cube");
-    object.transform.setPosition(glm::vec3(0, 0, -5));
-
-    auto object2 = Object("cube");
-    object2.transform.setPosition(glm::vec3(0, 0, 5));
-
-
-    auto object3 = Object("cube");
-    object3.transform.setPosition(glm::vec3(5, 0, 0));
-
-    auto object4 = Object("cube");
-    object4.transform.setPosition(glm::vec3(-5, 0, 0));
-
-
-    m_shapes.push_back(object);
-    m_shapes.push_back(object2);
-    // m_shapes.push_back(object3);
-    // m_shapes.push_back(object4);
-
-    skinned_mesh = gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx");
-    skinned_mesh.skeleton.setCurrentAnimation("Take 001");
-    skinned_transform.rotateDegrees(30, glm::vec3(0,1,0));
-    skinned_transform.setScale(glm::vec3(0.01));
-
-    // obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
-    obj_transform.setScale(glm::vec3(0.01));
-
-    // Example: load a mesh that was decomposed by src/python/coacd_preprocess.py
-    // Make sure you have generated this JSON first, e.g.:
-    //   python3 src/python/coacd_preprocess.py \
-    //       Resources/Models/Spider/spider.obj \
-    //       Resources/Models/Spider/spider_coacd.json
 
     auto obj_path = "Resources/Models/Spider/spider.obj";
-    // gl::Mesh::generateCoacdJson(obj_path,json_path, 0.01);
 
-    spider = gl::Mesh::loadStaticMesh(obj_path);
-    // coacd_mesh = gl::Mesh::decomposeObj(obj_path, 0.9);
-    coacd_transform.setScale(glm::vec3(0.01f));
+    obj_mesh = gl::Mesh::loadStaticMesh(obj_path);
+    coacd_mesh = gl::Mesh::decomposeObj(obj_path, 0.9);
+    obj_transform.setScale(glm::vec3(0.01f));
 
-    // std::vector<coacd::Mesh> c_meshes;
-    // spider = gl::Mesh::loadStaticMesh("Resources/Models/Spider/spider.obj", c_meshes);
-    // for (const auto& c_mesh : c_meshes) {
-    //     auto output= coacd::CoACD(c_mesh);
-    //     // debug::print("Produced " + std::to_string(output.size()) + " convex parts for spider mesh.");
-    // }
+    // skinned_mesh = gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx");
+    // skinned_mesh.skeleton.setCurrentAnimation("Take 001");
+    // skinned_transform.rotateDegrees(30, glm::vec3(0,1,0));
+    // skinned_transform.setScale(glm::vec3(0.01));
+
+    // obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
     // obj_transform.setScale(glm::vec3(0.01));
-    // obj_transform.setPosition(glm::vec3(0, 0, 0));
-
 }
 
 void drawGUI() {
@@ -107,19 +66,9 @@ void Core::draw() const {
     gl::Graphics::usePhongShader();
     gl::Graphics::setCameraUniforms(m_camera.get());
     gl::Graphics::setLight(*m_light);
-    for (const auto& obj : m_shapes) {
-        gl::Graphics::drawObject(obj.shape, obj.transform, obj.material);
-    }
+
     gl::Graphics::drawMesh(&obj_mesh, obj_transform);
-
-    // Draw CoACD-decomposed mesh (convex parts) if any
-
-    gl::Graphics::drawMesh(&spider, coacd_transform);
-    // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    gl::Graphics::drawMesh(&coacd_mesh, coacd_transform);
-    // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-
+    gl::Graphics::drawMesh(&coacd_mesh, obj_transform);
 
     gl::Graphics::setCameraUniforms(m_camera.get());
     gl::Graphics::setLight(*m_light);
