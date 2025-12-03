@@ -16,7 +16,6 @@
 
 namespace gl {}
     GLFWwindow* Window::window_ = nullptr;
-    UI* Window::ui_ = nullptr;
     Core* Window::core_ = nullptr;
 
     int Window::width_, Window::height_;
@@ -34,7 +33,7 @@ namespace gl {}
         initializeGLFW(width, height);
         initializeGLEW();
 
-        ui_ = new UI(window_);
+        UI::initialize(window_);
 
         gl::Graphics::initialize();
 
@@ -58,7 +57,7 @@ namespace gl {}
         const auto delta_time = static_cast<float>(s_currentTime - s_lastTime);
         core_->update(delta_time);
         display();
-        ui_->update();
+        // ui_->update();
 
         glfwSwapBuffers(window_);
 
@@ -86,7 +85,6 @@ namespace gl {}
             glfwDestroyWindow(window_);
         }
         delete core_;
-        delete ui_;
         gl::Graphics::tearDown();
         glfwTerminate();
     }

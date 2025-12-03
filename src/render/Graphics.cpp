@@ -18,7 +18,7 @@ namespace gl {
 
     void Graphics::initialize() {
         initializePhongShader();
-        setAmbientLight(glm::vec3(0.2));
+        setAmbientLight(glm::vec3(0.5));
         loadShapes();
     }
 
@@ -26,30 +26,28 @@ namespace gl {
         phong_.deleteProgram();
     }
 
-    void Graphics::usePhongShader() {
-        phong_.use();
-        active_shader_ = &phong_;
+    void applyGLSettings() {
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
         glEnable(GL_POLYGON_OFFSET_FILL);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
-        // glEnable(GL_POLYGON_SMOOTH);
+        glEnable(GL_POLYGON_SMOOTH);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glPolygonOffset(1.0, 1.0);
+    }
+
+    void Graphics::usePhongShader() {
+        phong_.use();
+        active_shader_ = &phong_;
+        applyGLSettings();
     }
 
     void Graphics::useSkinnedShader() {
         skinned_.use();
         active_shader_ = &skinned_;
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glEnable(GL_CULL_FACE);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_BLEND);
-        // glEnable(GL_POLYGON_SMOOTH);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glPolygonOffset(1.0, 1.0);
+        applyGLSettings();
     }
 
     void Graphics::drawObject(const DrawShape* drawShape, const Transform& transform, const DrawMaterial& material) {
@@ -116,7 +114,11 @@ namespace gl {
     }
 
     void Graphics::setAmbientLight(const glm::vec3& ambient) {
-        active_shader_->setVec3("ambient_light", ambient);
+        phong_.use();
+        phong_.setVec3("ambient_light", ambient);
+        skinned_.use();
+        skinned_.setVec3("ambient_light", ambient);
+        active_shader_->use();
     }
 
     void Graphics::initializePhongShader() {

@@ -59,7 +59,7 @@ void main() {
         : specular;
 
     // Ambient component
-    vec3 ambientResult = ambient * ambient_light;
+    vec3 ambientResult = diffuse * ambient_light;
 
     // Diffuse component
     float diff = max(dot(norm, lightDir), 0.0);

@@ -45,6 +45,34 @@ namespace gl {
         .textures = {}
     };
 
+    static const DrawMaterial colliderMaterial = {
+        .ambient = glm::vec3(1.f, 0.3f, 0.3f),
+        .diffuse = glm::vec3(1.0f, 0.3f, 0.3f),
+        .specular = glm::vec3(0.0f, 0.0f, 0.0f),
+        .shininess = 0.0f,
+        .opacity = 0.3f,
+        .textures = {}
+    };
+
+    static DrawMaterial getColliderMaterial(glm::vec3 color) {
+        return {
+            .ambient = color * 0.5f,
+            .diffuse = color,
+            .specular = glm::vec3(0.0f, 0.0f, 0.0f),
+            .shininess = 0.0f,
+            .opacity = 0.3f,
+            .textures = {}
+        };
+    }
+
+    static std::vector<glm::vec3> getRainbow(int number) {
+        for (int i=0; i<number; i++) {
+            float val = float(i) / float(number);
+
+        }
+        return {};
+    }
+
     class Texture {
     public:
         static std::unordered_map<std::string, DrawMaterial> loadSceneMaterials(const aiScene* scene, const std::string& directory);

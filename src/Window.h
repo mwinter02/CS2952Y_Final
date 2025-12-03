@@ -43,7 +43,6 @@ namespace gl {}
 
 
         static Core* core_;
-        static UI* ui_;
         static GLFWwindow *window_;
         static int width_, height_;
         static float aspect_ratio_;

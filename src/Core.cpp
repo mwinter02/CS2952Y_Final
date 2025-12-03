@@ -2,8 +2,11 @@
 
 #include <iostream>
 
+
 #include "Debug.h"
+#include "imgui.h"
 #include "Window.h"
+
 #include "render/Camera.h"
 #include "render/Mesh.h"
 #include "render/SkeletalMesh.h"
@@ -14,6 +17,14 @@ static gl::SkinnedMesh skinned_mesh;
 static gl::Transform skinned_transform;
 static gl::DrawMesh obj_mesh;
 static gl::Transform obj_transform;
+
+static gl::DrawMesh spider;
+static gl::Transform spider_transform;
+
+// New: draw mesh built from CoACD JSON
+static gl::DrawMesh coacd_mesh;
+static gl::Transform coacd_transform;
+
 Core::Core() : m_camera(std::make_shared<gl::Camera>()), m_light(std::make_shared<gl::Light>()) {
 
     m_light->position = glm::vec3(0, 5, 0);
@@ -41,13 +52,55 @@ Core::Core() : m_camera(std::make_shared<gl::Camera>()), m_light(std::make_share
     skinned_transform.rotateDegrees(30, glm::vec3(0,1,0));
     skinned_transform.setScale(glm::vec3(0.01));
 
-    obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
+    // obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
     obj_transform.setScale(glm::vec3(0.01));
 
-    // obj_mesh = gl::Mesh::loadObj("Resources/Models/Spider/spider.obj");
+    // Example: load a mesh that was decomposed by src/python/coacd_preprocess.py
+    // Make sure you have generated this JSON first, e.g.:
+    //   python3 src/python/coacd_preprocess.py \
+    //       Resources/Models/Spider/spider.obj \
+    //       Resources/Models/Spider/spider_coacd.json
+
+    auto obj_path = "Resources/Models/Spider/spider.obj";
+    // gl::Mesh::generateCoacdJson(obj_path,json_path, 0.01);
+
+    spider = gl::Mesh::loadStaticMesh(obj_path);
+    // coacd_mesh = gl::Mesh::decomposeObj(obj_path, 0.9);
+    coacd_transform.setScale(glm::vec3(0.01f));
+
+    // std::vector<coacd::Mesh> c_meshes;
+    // spider = gl::Mesh::loadStaticMesh("Resources/Models/Spider/spider.obj", c_meshes);
+    // for (const auto& c_mesh : c_meshes) {
+    //     auto output= coacd::CoACD(c_mesh);
+    //     // debug::print("Produced " + std::to_string(output.size()) + " convex parts for spider mesh.");
+    // }
     // obj_transform.setScale(glm::vec3(0.01));
     // obj_transform.setPosition(glm::vec3(0, 0, 0));
 
+}
+
+void drawGUI() {
+    UI::beginDraw(0,0, 300, 200);
+    ImGui::Begin("GUI");
+    ImGui::Text("Use WASD + Space/Shift to move camera");
+    ImGui::Text("Press Enter to lock cursor");
+    ImGui::Text("Press Escape to unlock cursor");
+    ImGui::Text("Press O to open file explorer");
+
+
+    if (ImGui::Button("Upload File")) {
+        auto path = UI::openFileExplorer({{"obj file","obj"}});
+        if (!path.empty()) {
+            debug::print("Selected file: " + path);
+            // Load the selected OBJ file
+            obj_mesh = gl::Mesh::loadStaticMesh(path.c_str());
+            obj_transform.setScale(glm::vec3(0.1f));
+        }
+    }
+    ImGui::End();
+
+
+    UI::endDraw();
 }
 
 void Core::draw() const {
@@ -59,11 +112,21 @@ void Core::draw() const {
     }
     gl::Graphics::drawMesh(&obj_mesh, obj_transform);
 
-    gl::Graphics::useSkinnedShader();
+    // Draw CoACD-decomposed mesh (convex parts) if any
+
+    gl::Graphics::drawMesh(&spider, coacd_transform);
+    // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    gl::Graphics::drawMesh(&coacd_mesh, coacd_transform);
+    // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+
+
     gl::Graphics::setCameraUniforms(m_camera.get());
     gl::Graphics::setLight(*m_light);
-    skinned_mesh.skeleton.playCurrentAnimation(Window::getCurrentTime());
-    gl::Graphics::drawSkinned(&skinned_mesh, skinned_transform);
+    // gl::Graphics::useSkinnedShader();
+    // skinned_mesh.skeleton.playCurrentAnimation(Window::getCurrentTime());
+    // gl::Graphics::drawSkinned(&skinned_mesh, skinned_transform);
+    drawGUI();
 }
 
 static glm::vec2 rotation(0.0f, 0.0f);
@@ -124,9 +187,10 @@ void Core::keyInputHandler(double delta_time) {
 
     if (Window::key(GLFW_KEY_ENTER)) {
         Window::hideMouse();
+        last_mouse_pos = Window::getMousePosition();
+
     }
     if (Window::key(GLFW_KEY_ESCAPE)) {
         Window::showMouse();
     }
 }
-

@@ -46,6 +46,15 @@ namespace util {
     }
 
     /**
+     * Gets the stem (filename without extension) of a file
+     * @param filename - The file name
+     * @return - The stem of the file
+     */
+    static std::string getStem(const std::string& filename) {
+        return std::filesystem::path(filename).stem().string();
+    }
+
+    /**
      * Fixes path separators to be correct for the current OS
      * @param path - The path to fix
      */
