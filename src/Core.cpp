@@ -15,19 +15,15 @@
 // static gl::SkinnedMesh skinned_mesh;
 // static gl::Transform skinned_transform;
 
-static gl::DrawMesh obj_mesh;
-static gl::Transform obj_transform;
-static gl::DrawMesh coacd_mesh;
 
-Core::Core() : m_camera(std::make_shared<gl::Camera>()), m_light(std::make_shared<gl::Light>()) {
 
-    m_light->position = glm::vec3(0, 5, 0);
+Core::Core() : camera_(std::make_shared<gl::Camera>()), light_(std::make_shared<gl::Light>()) {
+    light_->position = glm::vec3(0, 5, 0);
 
     auto obj_path = "Resources/Models/Spider/spider.obj";
-
-    obj_mesh = gl::Mesh::loadStaticMesh(obj_path);
-    coacd_mesh = gl::Mesh::decomposeObj(obj_path, 0.9);
-    obj_transform.setScale(glm::vec3(0.01f));
+    // obj_mesh = gl::Mesh::loadStaticMesh(obj_path);
+    // coacd_mesh = gl::Mesh::decomposeObj(obj_path, 0.9);
+    // obj_transform.setScale(glm::vec3(0.01f));
 
     // skinned_mesh = gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx");
     // skinned_mesh.skeleton.setCurrentAnimation("Take 001");
@@ -38,40 +34,68 @@ Core::Core() : m_camera(std::make_shared<gl::Camera>()), m_light(std::make_share
     // obj_transform.setScale(glm::vec3(0.01));
 }
 
-void drawGUI() {
+float getScale(const gl::DrawMesh* mesh) {
+    glm::vec3 size = mesh->max - mesh->min;
+    float max_extent = std::max({size.x, size.y, size.z});
+    return 10.0f / max_extent;
+}
+
+void Core::drawGUI() {
     UI::beginDraw(0,0, 300, 200);
     ImGui::Begin("GUI");
     ImGui::Text("Use WASD + Space/Shift to move camera");
     ImGui::Text("Press Enter to lock cursor");
     ImGui::Text("Press Escape to unlock cursor");
-    ImGui::Text("Press O to open file explorer");
-
 
     if (ImGui::Button("Upload File")) {
         auto path = UI::openFileExplorer({{"obj file","obj"}});
         if (!path.empty()) {
             debug::print("Selected file: " + path);
+            info_.object_path = path;
+
+            draw_object_.reset();
+            draw_object_ = std::make_unique<gl::DrawMesh>(gl::Mesh::loadStaticMesh(path.c_str()));
+            transform_.setScale(getScale(draw_object_.get()));
+            collider_.reset();
+
+
+
             // Load the selected OBJ file
-            obj_mesh = gl::Mesh::loadStaticMesh(path.c_str());
-            obj_transform.setScale(glm::vec3(0.1f));
+
         }
     }
+
+    if (ImGui::Button("Decompose Mesh")) {
+        collider_.reset();
+        collider_ = std::make_unique<gl::DrawMesh>(gl::Mesh::decomposeObj(info_.object_path.c_str(), params_.quality));
+        render_options_.show_collider = true;
+    }
+    ImGui::SliderFloat("Quality", &params_.quality, 0.f, 1.0f);
     ImGui::End();
-
-
     UI::endDraw();
 }
 
-void Core::draw() const {
+void Core::drawCurrentObject() {
+    if (draw_object_) {
+        glPolygonMode(GL_FRONT_AND_BACK, render_options_.mesh_polygon_mode);
+        gl::Graphics::drawMesh(draw_object_.get(), transform_);
+
+        if (collider_ && render_options_.show_collider) {
+            glPolygonMode(GL_FRONT_AND_BACK, render_options_.collider_polygon_mode);
+            gl::Graphics::drawMesh(collider_.get(), transform_);
+        }
+    }
+}
+
+void Core::draw() {
     gl::Graphics::usePhongShader();
-    gl::Graphics::setCameraUniforms(m_camera.get());
-    gl::Graphics::setLight(*m_light);
+    gl::Graphics::setCameraUniforms(camera_.get());
+    gl::Graphics::setLight(*light_);
 
-    gl::Graphics::drawMesh(&obj_mesh, obj_transform);
-    gl::Graphics::drawMesh(&coacd_mesh, obj_transform);
+    drawCurrentObject();
 
-    gl::Graphics::setCameraUniforms(m_camera.get());
-    gl::Graphics::setLight(*m_light);
+    gl::Graphics::setCameraUniforms(camera_.get());
+    gl::Graphics::setLight(*light_);
     // gl::Graphics::useSkinnedShader();
     // skinned_mesh.skeleton.playCurrentAnimation(Window::getCurrentTime());
     // gl::Graphics::drawSkinned(&skinned_mesh, skinned_transform);
@@ -101,7 +125,7 @@ void Core::update(double delta_time) {
         newFront.z = cos(glm::radians(rotation.y)) * cos(glm::radians(rotation.x));
         auto newLook = glm::normalize(newFront);
 
-        m_camera->setLook(newLook);
+        camera_->setLook(newLook);
     }
 
 
@@ -116,22 +140,22 @@ void Core::keyInputHandler(double delta_time) {
         return cam_xz;
     };
     if (Window::key(GLFW_KEY_W)) {
-        m_camera->setPosition(m_camera->getPosition() + mod * camXZ(m_camera->getLook()));
+        camera_->setPosition(camera_->getPosition() + mod * camXZ(camera_->getLook()));
     }
     if (Window::key(GLFW_KEY_S)) {
-        m_camera->setPosition(m_camera->getPosition() - mod * camXZ(m_camera->getLook()));
+        camera_->setPosition(camera_->getPosition() - mod * camXZ(camera_->getLook()));
     }
     if (Window::key(GLFW_KEY_A)) {
-        m_camera->setPosition(m_camera->getPosition() - mod * camXZ(m_camera -> getRight()));
+        camera_->setPosition(camera_->getPosition() - mod * camXZ(camera_ -> getRight()));
     }
     if (Window::key(GLFW_KEY_D)) {
-        m_camera->setPosition(m_camera->getPosition() + mod * camXZ(m_camera -> getRight()));
+        camera_->setPosition(camera_->getPosition() + mod * camXZ(camera_ -> getRight()));
     }
     if (Window::key(GLFW_KEY_SPACE)) {
-        m_camera->setPosition(m_camera->getPosition() + mod * m_camera->getUp());
+        camera_->setPosition(camera_->getPosition() + mod * camera_->getUp());
     }
     if (Window::key(GLFW_KEY_LEFT_SHIFT)) {
-        m_camera->setPosition(m_camera->getPosition() - mod * m_camera -> getUp());
+        camera_->setPosition(camera_->getPosition() - mod * camera_ -> getUp());
     }
 
     if (Window::key(GLFW_KEY_ENTER)) {
@@ -142,4 +166,8 @@ void Core::keyInputHandler(double delta_time) {
     if (Window::key(GLFW_KEY_ESCAPE)) {
         Window::showMouse();
     }
+}
+
+void Core::loadObject(const std::string& name) {
+
 }

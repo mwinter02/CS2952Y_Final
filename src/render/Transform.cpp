@@ -17,6 +17,10 @@ namespace gl {
         scale_ = scale;
     }
 
+    void Transform::setScale(float scale) {
+        scale_ = glm::vec3(scale);
+    }
+
     void Transform::setRotation(const glm::mat4& rotation_matrix) {
         rotation_ = rotation_matrix;
     }

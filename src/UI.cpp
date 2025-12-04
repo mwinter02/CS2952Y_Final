@@ -12,7 +12,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 #include "nfd.h"
-
+#include "Util.h"
 
 
 /**
@@ -65,7 +65,6 @@ std::string UI::openFileExplorer(std::vector<FileFilters> file_filters) {
     }
     else if (result == NFD_CANCEL)
     {
-        puts("User pressed cancel.");
         outPath = nullptr;
     }
     else
@@ -74,6 +73,14 @@ std::string UI::openFileExplorer(std::vector<FileFilters> file_filters) {
     }
 
     NFD_Quit();
+
+    auto root_path = util::getPath("");
+    if (!out_string.empty()) {
+        util::fixPath(out_string);
+        if (out_string.find(root_path) != std::string::npos) {
+            out_string = out_string.substr(root_path.length());
+        }
+    }
 
     return out_string;
 }

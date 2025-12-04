@@ -65,13 +65,65 @@ namespace gl {
         };
     }
 
+    static glm::vec3 getHue(float hue) {
+        hue = std::fmod(hue, 1.0f);
+        if (hue < 0.0f) hue += 1.0f;
+
+        float h = hue * 6.0f;          // [0,6)
+        int   i = static_cast<int>(std::floor(h));
+        float f = h - static_cast<float>(i);
+
+        float r = 0.0f;
+        float g = 0.0f;
+        float b = 0.0f;
+
+        switch (i) {
+        case 0: // red -> yellow
+            r = 1.0f;
+            g = f;
+            b = 0.0f;
+            break;
+        case 1: // yellow -> green
+            r = 1.0f - f;
+            g = 1.0f;
+            b = 0.0f;
+            break;
+        case 2: // green -> cyan
+            r = 0.0f;
+            g = 1.0f;
+            b = f;
+            break;
+        case 3: // cyan -> blue
+            r = 0.0f;
+            g = 1.0f - f;
+            b = 1.0f;
+            break;
+        case 4: // blue -> magenta
+            r = f;
+            g = 0.0f;
+            b = 1.0f;
+            break;
+        case 5: // magenta -> red
+        default:
+            r = 1.0f;
+            g = 0.0f;
+            b = 1.0f - f;
+            break;
+        }
+
+        return {r, g, b};
+    }
+
     static std::vector<glm::vec3> getRainbow(int number) {
+        std::vector<glm::vec3> rainbow;
         for (int i=0; i<number; i++) {
             float val = float(i) / float(number);
-
+            rainbow.emplace_back(getHue(val));
         }
-        return {};
+        return rainbow;
     }
+
+
 
     class Texture {
     public:

@@ -9,8 +9,6 @@
 
 #include "Texture.h"
 #include <fstream>
-#include <nlohmann/json.hpp>
-#include <cstdlib>
 
 
 
@@ -220,40 +218,47 @@ namespace gl {
         std::string directory = util::getDirectory(file_name);
         std::string json_name = directory + "/coacd_temp.json";
 
-        if (!generateCoacdJson(file_name, json_name.c_str(), threshold)) {
-            debug::error("Failed to generate coacd json file for: " + full_path);
+        // if (!generateCoacdJson(file_name, json_name.c_str(), threshold)) {
+        //     debug::error("Failed to generate coacd json file for: " + full_path);
+        //     debug::error("Ensure CoACD + trimesh is installed, use 'pip install coacd trimesh'");
+        //     return DrawMesh{};
+        // }
+
+        std::string output_name = directory + "/" + util::getStem(full_path) + "_collider.obj";
+
+
+        if (!generateObjPyScript(file_name, output_name.c_str(), threshold)) {
+            debug::error("Failed to generate coacd obj file for: " + full_path);
             debug::error("Ensure CoACD + trimesh is installed, use 'pip install coacd trimesh'");
             return DrawMesh{};
         }
+        // coacdJsonToObj(util::getPath(json_name).c_str(), util::getPath(output_name.c_str()).c_str());
 
-        std::string output_path = directory + "/" + util::getStem(full_path) + "_collider.obj";
-        coacdJsonToObj(util::getPath(json_name).c_str(), util::getPath(output_path.c_str()).c_str());
-
-        auto mesh = loadStaticMesh(output_path.c_str());
+        auto mesh = loadStaticMesh(output_name.c_str());
         setAllMaterials(mesh, colliderMaterial);
+
+        auto colors = getRainbow(mesh.objects.size());
+
+        for (int i=0; i<mesh.objects.size(); i++) {
+            auto& obj = mesh.objects[i];
+            auto color = colors[i];
+            obj.material = getColliderMaterial(color);
+        }
 
         return mesh;
     }
 
 
-    // Helper: given an OBJ path, run the Python CoACD preprocessor to create the JSON file.
-    // This assumes Python and the `coacd` + `trimesh` packages are installed and that
-    // src/python/coacd_preprocess.py exists relative to the project root.
-    //
-    // `obj_path` and `json_path` are relative to the project root in the same
-    // way you pass paths to loadStaticMesh / loadCoacdJson.
-    // Returns true on apparent success (Python exited with code 0).
-    bool Mesh::generateCoacdJson(const char* obj_path, const char* json_path, float threshold) {
-        // Resolve paths to actual filesystem locations
+    bool Mesh::generateObjPyScript(const char* obj_path, const char* output_path, float threshold) {
         std::string obj_fs = util::getPath(obj_path);
-        std::string json_fs = util::getPath(json_path);
+        std::string outpus_fs = util::getPath(output_path);
         std::string script_fs = util::getPath("src/python/coacd_preprocess.py");
 
         // Build command: python3 <script> <obj> <json> --threshold <value>
         char cmd[4096];
         std::snprintf(cmd, sizeof(cmd),
                       "python3 \"%s\" \"%s\" \"%s\" --threshold %f",
-                      script_fs.c_str(), obj_fs.c_str(), json_fs.c_str(), threshold);
+                      script_fs.c_str(), obj_fs.c_str(), outpus_fs.c_str(), threshold);
 
         debug::print("Running CoACD preprocessor: ");
         debug::print(cmd);
@@ -262,7 +267,7 @@ namespace gl {
         if (ret != 0) {
             debug::print("CoACD preprocessor failed with exit code: ");
             debug::print(std::to_string(ret));
-            std::remove(json_fs.c_str()); // remove incomplete file
+            std::remove(outpus_fs.c_str()); // remove incomplete file
             return false;
         }
         return true;
@@ -281,6 +286,7 @@ namespace gl {
 
     void writeObjNewShape(std::ofstream& ofs, const std::string& name) {
         ofs << "\n#\n# New Shape: " << name << "\n#\n";
+        ofs << "g " << name << std::endl;
     }
 
     void writeObjVertex(std::ofstream& ofs, const glm::vec3& v) {
@@ -292,159 +298,4 @@ namespace gl {
         ofs << "f " << i1+1 << " " << i2+1 << " " << i3+1 << "\n";
     }
 
-    void Mesh::coacdJsonToObj(const char* json_full_path, const char* collider_output_obj) {
-        // Open and parse JSON
-        std::ifstream in(json_full_path);
-        if (!in) {
-            debug::print("Failed to open CoACD JSON file: ");
-            return;
-        }
-
-        nlohmann::json j;
-        in >> j;
-
-        if (!j.contains("parts") || !j["parts"].is_array()) {
-            debug::print("Invalid CoACD JSON format (no 'parts' array):");
-            return;
-        }
-
-        auto obj_writer = createObjFile(collider_output_obj);
-
-        int shape_no = 0;
-
-        int vertex_offset = 0;
-        for (const auto& part : j["parts"]) {
-            if (!part.contains("vertices") || !part.contains("indices")) continue;
-
-            writeObjNewShape(obj_writer, "Collider: " + std::to_string(shape_no));
-            shape_no++;
-            const auto& vflat = part["vertices"];
-            const auto& iflat = part["indices"];
-            if (!vflat.is_array() || !iflat.is_array()) continue;
-            int current_vertex_offset = 0;
-            for (size_t i = 0; i + 2 < vflat.size(); i += 3) {
-                float x = vflat[i].get<float>();
-                float y = vflat[i + 1].get<float>();
-                float z = vflat[i + 2].get<float>();
-                writeObjVertex(obj_writer, glm::vec3(x, y, z));
-                current_vertex_offset ++;
-            }
-
-            for (size_t i = 0; i + 2 < iflat.size(); i += 3) {
-                int i0 = iflat[i].get<int>() + vertex_offset;
-                int i1 = iflat[i + 1].get<int>() + vertex_offset;
-                int i2 = iflat[i + 2].get<int>() + vertex_offset;
-                if (i0 < 0 || i1 < 0 || i2 < 0) continue;
-                writeObjFace(obj_writer, i0, i1, i2);
-            }
-            vertex_offset += current_vertex_offset;
-        }
-        obj_writer.close();
-        std::remove(json_full_path); // clean up temp file after use
-    }
-
-    DrawMesh Mesh::loadCoacdJson(const char* json_filename, const char* collider_output_obj) {
-        DrawMesh mesh;
-        glm::vec3 min(std::numeric_limits<float>::max());
-        glm::vec3 max(std::numeric_limits<float>::lowest());
-
-        // Open and parse JSON
-        std::ifstream in(util::getPath(json_filename));
-        if (!in) {
-            debug::print("Failed to open CoACD JSON file: ");
-            return mesh;
-        }
-
-        nlohmann::json j;
-        in >> j;
-
-        if (!j.contains("parts") || !j["parts"].is_array()) {
-            debug::print("Invalid CoACD JSON format (no 'parts' array):");
-            return mesh;
-        }
-
-        // For now, render all convex parts with a default material.
-        // We reuse the first material from a dummy load of the source model if available.
-        // Otherwise, we leave material at its default.
-        //
-        // Note: You can extend this later to carry material info through JSON.
-
-        auto obj_writer = createObjFile(collider_output_obj);
-
-        int shape_no = 0;
-        for (const auto& part : j["parts"]) {
-            if (!part.contains("vertices") || !part.contains("indices")) continue;
-
-            writeObjNewShape(obj_writer, "Collider: " + std::to_string(shape_no));
-            shape_no++;
-            const auto& vflat = part["vertices"];
-            const auto& iflat = part["indices"];
-            if (!vflat.is_array() || !iflat.is_array()) continue;
-
-            std::vector<float> gl_data;
-
-            // Rebuild positions from flat vertex array
-            std::vector<glm::vec3> positions;
-            positions.reserve(vflat.size() / 3);
-            for (size_t i = 0; i + 2 < vflat.size(); i += 3) {
-                float x = vflat[i].get<float>();
-                float y = vflat[i + 1].get<float>();
-                float z = vflat[i + 2].get<float>();
-                positions.emplace_back(x, y, z);
-                writeObjVertex(obj_writer, glm::vec3(x, y, z));
-            }
-
-            // Compute a simple face-normal per triangle for now
-            for (size_t i = 0; i + 2 < iflat.size(); i += 3) {
-                int i0 = iflat[i].get<int>();
-                int i1 = iflat[i + 1].get<int>();
-                int i2 = iflat[i + 2].get<int>();
-                if (i0 < 0 || i1 < 0 || i2 < 0) continue;
-                if ((size_t)i0 >= positions.size() || (size_t)i1 >= positions.size() || (size_t)i2 >= positions.size()) continue;
-
-                writeObjFace(obj_writer, i0, i1, i2);
-
-                glm::vec3 p0 = positions[i0];
-                glm::vec3 p1 = positions[i1];
-                glm::vec3 p2 = positions[i2];
-                glm::vec3 n = glm::normalize(glm::cross(p1 - p0, p2 - p0));
-
-                // For simplicity, we duplicate vertices per triangle, matching existing GL layout
-                const glm::vec2 uv(0.0f); // no UVs from CoACD output
-
-                auto push_vertex = [&](const glm::vec3& p) {
-                    gl_data.push_back(p.x);
-                    gl_data.push_back(p.y);
-                    gl_data.push_back(p.z);
-                    gl_data.push_back(n.x);
-                    gl_data.push_back(n.y);
-                    gl_data.push_back(n.z);
-                    gl_data.push_back(uv.x);
-                    gl_data.push_back(uv.y);
-                };
-
-                push_vertex(p0);
-                push_vertex(p1);
-                push_vertex(p2);
-            }
-
-
-            if (gl_data.empty()) continue;
-
-            DrawObject object;
-            object.shape = loadStaticShape(gl_data);
-            object.material = colliderMaterial;
-            // Use a default material; caller can override if desired.
-            mesh.objects.push_back(object);
-            min = glm::min(min, object.shape.min);
-            max = glm::max(max, object.shape.max);
-        }
-
-        obj_writer.close();
-
-
-        mesh.min = min;
-        mesh.max = max;
-        return mesh;
-    }
 }
