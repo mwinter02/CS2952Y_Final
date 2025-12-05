@@ -34,7 +34,7 @@ void UI::beginDraw(float x_pos, float y_pos, float width, float height) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
     ImGui::SetNextWindowPos({x_pos, y_pos});
-    ImGui::SetNextWindowSize({width,height});
+    ImGui::SetNextWindowSize({width,height}, ImGuiCond_Once);
 }
 
 void UI::endDraw() {

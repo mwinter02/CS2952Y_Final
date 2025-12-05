@@ -2,6 +2,7 @@
 #include <string>
 
 #include "render/Graphics.h"
+#include "render/SkeletalMesh.h"
 
 namespace gl {
     class Camera;
@@ -19,11 +20,14 @@ struct DecompParameters {
 };
 
 struct RenderOptions {
-    GLenum mesh_polygon_mode = GL_FILL;
-    GLenum collider_polygon_mode = GL_FILL;
 
+    bool mesh_wireframe = false;
+    bool collider_wireframe = false;
+
+    bool is_skeletal = false;
     bool show_mesh = true;
     bool show_collider = false;
+    bool play_animation = true;
 };
 
 struct Object {
@@ -47,7 +51,10 @@ public:
 
     void keyInputHandler(double delta_time);
 private:
-
+    void guiStatic();
+    void setAnimation(int index);
+    void guiSkeletal();
+    void guiRenderOptions();
     void drawGUI();
     void loadObject(const std::string& name);
     void drawCurrentObject();
@@ -57,7 +64,8 @@ private:
     ObjectInfo info_;
     RenderOptions render_options_;
 
-    std::unique_ptr<gl::DrawMesh> draw_object_;
+    std::unique_ptr<gl::DrawMesh> static_mesh_;
+    std::unique_ptr<gl::SkinnedMesh> skinned_mesh_;
     std::unique_ptr<gl::DrawMesh> collider_;
     gl::Transform transform_;
 

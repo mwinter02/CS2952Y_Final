@@ -6,103 +6,200 @@
 #include "Debug.h"
 #include "imgui.h"
 #include "Window.h"
+#include "../External/assimp/code/AssetLib/FBX/FBXExporter.h"
 
 #include "render/Camera.h"
 #include "render/Mesh.h"
 #include "render/SkeletalMesh.h"
 
 
-static gl::SkinnedMesh skinned_mesh;
-static gl::Transform skinned_transform;
-
-
-
-Core::Core() : camera_(std::make_shared<gl::Camera>()), light_(std::make_shared<gl::Light>()) {
-    light_->position = glm::vec3(0, 5, 0);
-
-    // obj_mesh = gl::Mesh::loadStaticMesh(obj_path);
-    // coacd_mesh = gl::Mesh::decomposeObj(obj_path, 0.9);
-    // obj_transform.setScale(glm::vec3(0.01f));
-
-    skinned_mesh = gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx");
-    skinned_mesh.skeleton.setCurrentAnimation("Take 001");
-    skinned_transform.setScale(glm::vec3(0.01));
-
-    // obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
-    // obj_transform.setScale(glm::vec3(0.01));
-}
-
 float getScale(const gl::DrawMesh* mesh) {
+
     glm::vec3 size = mesh->max - mesh->min;
     float max_extent = std::max({size.x, size.y, size.z});
     return 10.0f / max_extent;
 }
 
-void Core::drawGUI() {
-    UI::beginDraw(0,0, 300, 200);
-    ImGui::Begin("GUI");
-    ImGui::Text("Use WASD + Space/Shift to move camera");
-    ImGui::Text("Press Enter to lock cursor");
-    ImGui::Text("Press Escape to unlock cursor");
+Core::Core() : camera_(std::make_shared<gl::Camera>()), light_(std::make_shared<gl::Light>())
+// , skinned_mesh_(std::make_unique<gl::SkinnedMesh>(gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx")))
+ {
+    light_->position = glm::vec3(0, 5, 0);
 
+
+    // obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
+    // obj_transform.setScale(glm::vec3(0.01));
+
+}
+
+
+
+
+void Core::guiStatic() {
     if (ImGui::Button("Upload File")) {
         auto path = UI::openFileExplorer({{"obj file","obj"}});
         if (!path.empty()) {
             debug::print("Selected file: " + path);
             info_.object_path = path;
 
-            draw_object_.reset();
-            draw_object_ = std::make_unique<gl::DrawMesh>(gl::Mesh::loadStaticMesh(path.c_str()));
-            transform_.setScale(getScale(draw_object_.get()));
+            static_mesh_.reset();
+            static_mesh_ = std::make_unique<gl::DrawMesh>(gl::Mesh::loadStaticMesh(path.c_str()));
+            transform_.setScale(getScale(static_mesh_.get()));
             collider_.reset();
-
-
-
+            render_options_.is_skeletal = false;
             // Load the selected OBJ file
 
         }
     }
 
-    if (ImGui::Button("Decompose Mesh")) {
-        collider_.reset();
-        collider_ = std::make_unique<gl::DrawMesh>(gl::Mesh::decomposeObj(info_.object_path.c_str(), params_.quality));
-        render_options_.show_collider = true;
+    if (static_mesh_) {
+        if (ImGui::Button("Decompose Mesh")) {
+            collider_.reset();
+            collider_ = std::make_unique<gl::DrawMesh>(gl::Mesh::decomposeObj(info_.object_path.c_str(), params_.quality));
+            render_options_.show_collider = true;
+        }
+        ImGui::SliderFloat("Quality", &params_.quality, 0.f, 1.0f);
     }
-    ImGui::SliderFloat("Quality", &params_.quality, 0.f, 1.0f);
+}
+
+static int current_animation = 0;
+
+void Core::setAnimation(int index) {
+    if (skinned_mesh_ && index >=0 && index < skinned_mesh_->skeleton.animation_list_.size()) {
+        if (skinned_mesh_->skeleton.current_animation_ != &skinned_mesh_->skeleton.animations_[skinned_mesh_->skeleton.animation_list_[index]]) {
+            skinned_mesh_->skeleton.setCurrentAnimation(skinned_mesh_->skeleton.animation_list_[index]);
+        }
+    }
+    if (index == -1 && skinned_mesh_) {
+        skinned_mesh_->skeleton.current_animation_ = nullptr;
+        skinned_mesh_->skeleton.resetToBindPose();
+    }
+}
+void Core::guiSkeletal() {
+    if (ImGui::Button("Upload FBX File")) {
+        auto path = UI::openFileExplorer({{"fbx file","fbx"}});
+        if (!path.empty()) {
+            debug::print("Selected file: " + path);
+            info_.object_path = path;
+            skinned_mesh_.reset();
+            skinned_mesh_ = std::make_unique<gl::SkinnedMesh>(gl::SkeletalMesh::loadFbx(path.c_str()));
+            transform_.setScale(getScale(&skinned_mesh_->draw_mesh));
+            debug::print("Scale: " + std::to_string(transform_.getScale().x));
+            render_options_.is_skeletal = true;
+
+        }
+    }
+
+    if (!skinned_mesh_) {
+        ImGui::Text("Upload Skeletal Mesh (.fbx) to see more options.");
+        return;
+    }
+
+    ImGui::SeparatorText("Animations");
+    ImGui::Text("Select Animation:");
+    if (skinned_mesh_) {
+        ImGui::RadioButton("Off", &current_animation, -1);
+        for (int i=0; i<skinned_mesh_->skeleton.animation_list_.size(); i++) {
+            const auto& anim_name = skinned_mesh_->skeleton.animation_list_[i];
+            ImGui::RadioButton(anim_name.c_str(), &current_animation, i);
+        }
+        setAnimation(current_animation);
+    }
+    ImGui::Checkbox("Play animation", &render_options_.play_animation);
+}
+
+void Core::guiRenderOptions() {
+    ImGui::Separator();
+    ImGui::Text("Render Options:");
+    ImGui::Checkbox("Show Mesh", &render_options_.show_mesh);
+    ImGui::Checkbox("Show Collider", &render_options_.show_collider);
+    ImGui::Checkbox("Wireframe Mesh", &render_options_.mesh_wireframe);
+    ImGui::Checkbox("Wireframe Collider", &render_options_.collider_wireframe);
+}
+
+void Core::drawGUI() {
+    UI::beginDraw(0,0, 300, 200);
+    ImGui::Begin("Mesh Decomposer");
+    ImGui::Text("Use WASD + Space/Shift to move camera");
+    ImGui::Text("Press Enter to lock cursor");
+    ImGui::Text("Press Escape to unlock cursor");
+    ImGui::Separator();
+    ImGui::Text("Choose mesh type:");
+    if (ImGui::BeginTabBar("MyTabBar")) {
+        if (ImGui::BeginTabItem("Static .obj")) {
+            guiStatic();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Skeletal .fbx")) {
+            guiSkeletal();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    guiRenderOptions();
+
+    ImGui::Separator();
+
+
+    // ImGui::Begin("GUI");
+
     ImGui::End();
     UI::endDraw();
 }
 
-void Core::drawCurrentObject() {
-    if (draw_object_) {
-        glPolygonMode(GL_FRONT_AND_BACK, render_options_.mesh_polygon_mode);
-        gl::Graphics::drawMesh(draw_object_.get(), transform_);
 
-        if (collider_ && render_options_.show_collider) {
-            glPolygonMode(GL_FRONT_AND_BACK, render_options_.collider_polygon_mode);
-            gl::Graphics::drawMesh(collider_.get(), transform_);
+static double previous_time = Window::getCurrentTime();
+void Core::drawCurrentObject() {
+    double delta_time = Window::getCurrentTime() - previous_time;
+    previous_time = Window::getCurrentTime();
+    if (render_options_.is_skeletal) {
+        gl::Graphics::useSkinnedShader();
+        gl::Graphics::setCameraUniforms(camera_.get());
+        gl::Graphics::setLight(*light_);
+        if (skinned_mesh_) {
+            if (render_options_.play_animation) {
+                skinned_mesh_->skeleton.playCurrentAnimation(delta_time);
+            }
+            if (render_options_.show_mesh) {
+                glPolygonMode(GL_FRONT_AND_BACK, render_options_.mesh_wireframe ? GL_LINE : GL_FILL);
+                gl::Graphics::drawSkinned(skinned_mesh_->draw_mesh, skinned_mesh_->skeleton, transform_);
+            }
+            if (render_options_.show_collider) {
+                glDisable(GL_CULL_FACE);
+                glPolygonMode(GL_FRONT_AND_BACK, render_options_.collider_wireframe ? GL_LINE : GL_FILL);
+                gl::Graphics::drawSkinned(skinned_mesh_->collision_mesh, skinned_mesh_->skeleton, transform_);
+                glEnable(GL_CULL_FACE);
+            }
         }
     }
+    else {
+        if (static_mesh_) {
+            gl::Graphics::usePhongShader();
+            gl::Graphics::setCameraUniforms(camera_.get());
+            gl::Graphics::setLight(*light_);
+
+
+
+            if (render_options_.show_mesh) {
+                GLenum mesh_mode = render_options_.mesh_wireframe ? GL_LINE : GL_FILL;
+                glPolygonMode(GL_FRONT_AND_BACK, mesh_mode);
+                gl::Graphics::drawMesh(static_mesh_.get(), transform_);
+            }
+
+            if (collider_ && render_options_.show_collider) {
+                GLenum collider_mode = render_options_.collider_wireframe ? GL_LINE : GL_FILL;
+                glPolygonMode(GL_FRONT_AND_BACK, collider_mode);
+                gl::Graphics::drawMesh(collider_.get(), transform_);
+            }
+
+
+        }
+    }
+
 }
 
 void Core::draw() {
-    gl::Graphics::usePhongShader();
-    gl::Graphics::setCameraUniforms(camera_.get());
-    gl::Graphics::setLight(*light_);
-
     drawCurrentObject();
-
-    gl::Graphics::useSkinnedShader();
-    gl::Graphics::setCameraUniforms(camera_.get());
-    gl::Graphics::setLight(*light_);
-    skinned_mesh.skeleton.playCurrentAnimation(Window::getCurrentTime());
-    gl::Graphics::drawSkinned(skinned_mesh.draw_mesh, skinned_mesh.skeleton, skinned_transform);
-    glPolygonMode(GL_FRONT, GL_FILL);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);  // Disable depth writes
-    glEnable(GL_BLEND);     // Already enabled in applyGLSettings, but making it explicit
-    gl::Graphics::drawSkinned(skinned_mesh.collision_mesh, skinned_mesh.skeleton, skinned_transform);
-    glDepthMask(GL_TRUE);
     drawGUI();
 }
 

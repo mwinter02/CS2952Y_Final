@@ -62,6 +62,7 @@ namespace gl {
     struct Animation {
         double duration; // in ticks
         double ticks_per_second;
+        double time_in_seconds = 0.0;
 
         // Map from bone_id to its animation channel
         std::unordered_map<unsigned int, AnimationChannel> channels;
@@ -75,17 +76,18 @@ namespace gl {
 
     struct Skeleton {
         public:
+        Skeleton() = default;
         void addBone(const std::string& bone_name, const unsigned int current_id, const int parent_id,
             const glm::mat4& offset_matrix, const glm::mat4& local_transform);
         void updateBoneMatrices();
 
 
         void setCurrentAnimation(const std::string& animation_name);
-        void playCurrentAnimation(double current_time);
+        void playCurrentAnimation(double time_since_previous);
         void resetToBindPose();
 
         void traverseBoneHierarchy(const unsigned int bone_id, const glm::mat4& parent_transform);
-        unsigned int num_bones_;
+        unsigned int num_bones_ = 0;
         std::vector<Bone> bones_;
         std::unordered_map<std::string, unsigned int> bone_map_;
         std::vector<glm::mat4> bone_matrices_;
@@ -95,7 +97,11 @@ namespace gl {
         std::unordered_map<unsigned int, std::vector<unsigned int>> vertex_to_boneID_map_;
 
         std::unordered_map<std::string, Animation> animations_;
+        std::vector<std::string> animation_list_;
         Animation* current_animation_ = nullptr;
+
+        glm::vec3 min = glm::vec3(std::numeric_limits<float>::max());
+        glm::vec3 max = glm::vec3(std::numeric_limits<float>::lowest());
 
         // Heuristic of bone_importance = sum(weight for each vertice)
     };
@@ -114,8 +120,10 @@ namespace gl {
 
     class SkeletalMesh {
     public:
-        static void exportWithColliders(const char* output_path, const Skeleton& skeleton, const DrawMesh& collision_mesh,
-                                 const aiScene* original_scene);
+        static void exportWithColliders(const char* output_path,
+                                       const Skeleton& skeleton,
+                                       const DrawMesh& collision_mesh,
+                                       const aiScene* original_scene);
         static SkinnedMesh loadFbx(const char* filename);
         static DrawMesh decomposeSkeleton(const Skeleton& skeleton);
 

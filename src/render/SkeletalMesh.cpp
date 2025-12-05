@@ -214,6 +214,9 @@ namespace gl {
         }
         std::string root_name = findRootBone(scene->mRootNode, bone_names);
         auto node = scene->mRootNode->FindNode(aiString(root_name));
+        auto name = node->mParent->mName;
+
+
         constructSkeleton(skeleton, node, scene, -1, glm::mat4(1.0f));
         return skeleton;
     }
@@ -269,9 +272,10 @@ namespace gl {
         current_animation_ = &animations_.at(animation_name);
     }
 
-    void Skeleton::playCurrentAnimation(double current_time) {
+    void Skeleton::playCurrentAnimation(double time_since_previous) {
         if (current_animation_) {
-            const double time_in_ticks = current_time * current_animation_->ticks_per_second;
+            current_animation_->time_in_seconds += time_since_previous;
+            const double time_in_ticks = current_animation_->time_in_seconds * current_animation_->ticks_per_second;
             const double animation_time = fmod(time_in_ticks, current_animation_->duration);
             // Update each bone's local transform based on animation channels
             for (auto& [bone_id, channel] : current_animation_->channels) {
@@ -349,203 +353,13 @@ namespace gl {
         return animations_map;
     }
 
-    void SkeletalMesh::exportWithColliders(const char* output_path,
-                                           const Skeleton& skeleton,
-                                           const DrawMesh& collision_mesh,
-                                           const aiScene* original_scene) {
-        // Create a new scene that will contain both original and collision meshes
-        aiScene* export_scene = nullptr;
 
-        // Use Assimp's CopyScene for proper deep copy
-        aiCopyScene(original_scene, &export_scene);
 
-        // Now we need to expand materials array to add collision materials
-        unsigned int old_mat_count = export_scene->mNumMaterials;
-        unsigned int new_mat_count = old_mat_count + collision_mesh.objects.size();
 
-        aiMaterial** new_materials = new aiMaterial*[new_mat_count];
-
-        // Copy existing material pointers
-        for (unsigned int i = 0; i < old_mat_count; i++) {
-            new_materials[i] = export_scene->mMaterials[i];
-        }
-
-        // Add collision mesh materials
-        for (size_t i = 0; i < collision_mesh.objects.size(); i++) {
-            aiMaterial* collision_mat = new aiMaterial();
-            aiString mat_name("CollisionMaterial_" + std::to_string(i));
-            collision_mat->AddProperty(&mat_name, AI_MATKEY_NAME);
-
-            const auto& mat = collision_mesh.objects[i].material;
-            aiColor3D diffuse(mat.diffuse.r, mat.diffuse.g, mat.diffuse.b);
-            collision_mat->AddProperty(&diffuse, 1, AI_MATKEY_COLOR_DIFFUSE);
-
-            float opacity = mat.opacity;
-            collision_mat->AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
-
-            new_materials[old_mat_count + i] = collision_mat;
-        }
-
-        // Replace materials array
-        delete[] export_scene->mMaterials;
-        export_scene->mMaterials = new_materials;
-        export_scene->mNumMaterials = new_mat_count;
-
-        // Expand meshes array to add collision meshes
-        unsigned int old_mesh_count = export_scene->mNumMeshes;
-        unsigned int new_mesh_count = old_mesh_count + collision_mesh.objects.size();
-
-        aiMesh** new_meshes = new aiMesh*[new_mesh_count];
-
-        // Copy existing mesh pointers
-        for (unsigned int i = 0; i < old_mesh_count; i++) {
-            new_meshes[i] = export_scene->mMeshes[i];
-        }
-
-        // Replace meshes array (we'll populate collision meshes next)
-        delete[] export_scene->mMeshes;
-        export_scene->mMeshes = new_meshes;
-        export_scene->mNumMeshes = new_mesh_count;
-
-        // Convert DrawMesh collision hulls to aiMesh
-        for (size_t i = 0; i < collision_mesh.objects.size(); i++) {
-            const auto& obj = collision_mesh.objects[i];
-            const auto& shape = obj.shape;
-
-            aiMesh* ai_collision = new aiMesh();
-            ai_collision->mName = aiString("CollisionHull_" + std::to_string(i));
-            ai_collision->mMaterialIndex = old_mat_count + i;
-            ai_collision->mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
-
-            // Read back vertex data from GPU buffers
-            std::vector<glm::vec3> positions(shape.numTriangles * 3);
-            std::vector<glm::vec3> normals(shape.numTriangles * 3);
-            std::vector<BoneIDs> bone_ids(shape.numTriangles * 3);
-            std::vector<BoneWeights> bone_weights(shape.numTriangles * 3);
-
-            glBindVertexArray(shape.vao);
-
-            // Read positions (attribute 0)
-            GLuint vbo_pos;
-            glGetVertexAttribIuiv(0, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo_pos);
-            glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
-            glGetBufferSubData(GL_ARRAY_BUFFER, 0, positions.size() * sizeof(glm::vec3), positions.data());
-
-            // Read normals (attribute 1)
-            GLuint vbo_normal;
-            glGetVertexAttribIuiv(1, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo_normal);
-            glBindBuffer(GL_ARRAY_BUFFER, vbo_normal);
-            glGetBufferSubData(GL_ARRAY_BUFFER, 0, normals.size() * sizeof(glm::vec3), normals.data());
-
-            // Read bone IDs and weights
-            GLuint vbo_bone_ids, vbo_bone_weights;
-            glGetVertexAttribIuiv(3, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo_bone_ids);
-            glBindBuffer(GL_ARRAY_BUFFER, vbo_bone_ids);
-            glGetBufferSubData(GL_ARRAY_BUFFER, 0, bone_ids.size() * sizeof(BoneIDs), bone_ids.data());
-
-            glGetVertexAttribIuiv(4, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo_bone_weights);
-            glBindBuffer(GL_ARRAY_BUFFER, vbo_bone_weights);
-            glGetBufferSubData(GL_ARRAY_BUFFER, 0, bone_weights.size() * sizeof(BoneWeights), bone_weights.data());
-
-            glBindVertexArray(0);
-
-            // Populate aiMesh vertices
-            ai_collision->mNumVertices = positions.size();
-            ai_collision->mVertices = new aiVector3D[ai_collision->mNumVertices];
-            ai_collision->mNormals = new aiVector3D[ai_collision->mNumVertices];
-
-            for (size_t v = 0; v < positions.size(); v++) {
-                ai_collision->mVertices[v] = aiVector3D(positions[v].x, positions[v].y, positions[v].z);
-                ai_collision->mNormals[v] = aiVector3D(normals[v].x, normals[v].y, normals[v].z);
-            }
-
-            // Create faces
-            ai_collision->mNumFaces = shape.numTriangles;
-            ai_collision->mFaces = new aiFace[ai_collision->mNumFaces];
-
-            for (unsigned int f = 0; f < shape.numTriangles; f++) {
-                aiFace& face = ai_collision->mFaces[f];
-                face.mNumIndices = 3;
-                face.mIndices = new unsigned int[3];
-                face.mIndices[0] = f * 3;
-                face.mIndices[1] = f * 3 + 1;
-                face.mIndices[2] = f * 3 + 2;
-            }
-
-            // Add bones to collision mesh
-            std::unordered_map<unsigned int, std::vector<std::pair<unsigned int, float>>> bone_vertex_map;
-
-            for (size_t v = 0; v < bone_ids.size(); v++) {
-                for (int b = 0; b < MAX_BONES_PER_VERTEX; b++) {
-                    if (bone_weights[v][b] > 0.0f) {
-                        bone_vertex_map[bone_ids[v][b]].emplace_back(v, bone_weights[v][b]);
-                    }
-                }
-            }
-
-            ai_collision->mNumBones = bone_vertex_map.size();
-            ai_collision->mBones = new aiBone*[ai_collision->mNumBones];
-
-            size_t bone_idx = 0;
-            for (const auto& [bone_id, weights] : bone_vertex_map) {
-                const auto& skel_bone = skeleton.bones_[bone_id];
-
-                aiBone* ai_bone = new aiBone();
-                ai_bone->mName = aiString(skel_bone.name);
-                ai_bone->mOffsetMatrix = util::glmToAiMat4(skel_bone.offset_matrix); // You'll need this helper
-                ai_bone->mNumWeights = weights.size();
-                ai_bone->mWeights = new aiVertexWeight[weights.size()];
-
-                for (size_t w = 0; w < weights.size(); w++) {
-                    ai_bone->mWeights[w].mVertexId = weights[w].first;
-                    ai_bone->mWeights[w].mWeight = weights[w].second;
-                }
-
-                ai_collision->mBones[bone_idx++] = ai_bone;
-            }
-
-            export_scene->mMeshes[old_mesh_count + i] = ai_collision;
-        }
-
-        // Add collision meshes to root node
-        aiNode* collision_node = new aiNode("CollisionMeshes");
-        collision_node->mNumMeshes = collision_mesh.objects.size();
-        collision_node->mMeshes = new unsigned int[collision_node->mNumMeshes];
-
-        for (size_t i = 0; i < collision_mesh.objects.size(); i++) {
-            collision_node->mMeshes[i] = old_mesh_count + i;
-        }
-
-        // Attach collision node to root
-        unsigned int old_num_children = export_scene->mRootNode->mNumChildren;
-        aiNode** new_children = new aiNode*[old_num_children + 1];
-
-        for (unsigned int i = 0; i < old_num_children; i++) {
-            new_children[i] = export_scene->mRootNode->mChildren[i];
-        }
-        new_children[old_num_children] = collision_node;
-        collision_node->mParent = export_scene->mRootNode;
-
-        delete[] export_scene->mRootNode->mChildren;
-        export_scene->mRootNode->mChildren = new_children;
-        export_scene->mRootNode->mNumChildren = old_num_children + 1;
-
-        // Export FBX
-        Assimp::Exporter exporter;
-        aiReturn result = exporter.Export(export_scene, "fbx", output_path, aiProcess_FlipUVs);
-
-        if (result != AI_SUCCESS) {
-            debug::error("Failed to export FBX: " + std::string(exporter.GetErrorString()));
-        }
-
-        delete export_scene;
-    }
-
-    static Assimp::Importer importer;
     SkinnedMesh SkeletalMesh::loadFbx(const char* filename) {
         auto directory = util::getDirectory(filename);
 
-
+        Assimp::Importer importer;
         importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
 
         // aiProcess_LimitBoneWeights; // Limit bone weights to 4 per vertex
@@ -561,6 +375,10 @@ namespace gl {
 
         auto skeleton = loadSkeleton(scene);
         skeleton.animations_ = loadAnimations(scene, skeleton);
+        for (const auto& name : skeleton.animations_ | std::views::keys) {
+            skeleton.animation_list_.push_back(name);
+        }
+
         std::vector<AnimationChannel> channels;
         for (const auto& [k, v] : skeleton.animations_["Take 001"].channels) {
             channels.push_back(v);
@@ -663,11 +481,20 @@ namespace gl {
             DrawObject object;
             object.shape = loadSkinnedShape(positions, normals, texcoords, face_bone_ids, face_bone_weights);
             object.material = materials[material_name];
+
+            mesh.min = glm::min(mesh.min, object.shape.min);
+            mesh.max = glm::max(mesh.max, object.shape.max);
             mesh.objects.push_back(object);
 
         }
 
         auto collision_mesh = decomposeSkeleton(skeleton);
+
+        // Export collision meshes with skeleton to FBX
+        std::string output = util::getPath(filename);
+        util::removeExtension(output);
+        output += "_with_colliders.fbx";
+        exportWithColliders(output.c_str(), skeleton, collision_mesh, scene);
 
         skeleton.updateBoneMatrices();
         return {mesh, collision_mesh, skeleton};
@@ -873,8 +700,8 @@ namespace gl {
         glBindVertexArray(0);
 
         // Calculate bounding box
-        glm::vec3 bmin(FLT_MAX);
-        glm::vec3 bmax(-FLT_MAX);
+        glm::vec3 bmin(std::numeric_limits<float>::max());
+        glm::vec3 bmax(std::numeric_limits<float>::lowest());
         for (const auto& pos : positions) {
             bmin = glm::min(bmin, pos);
             bmax = glm::max(bmax, pos);
@@ -887,5 +714,334 @@ namespace gl {
         shape.max = bmax;
 
         return shape;
+    }
+
+    void SkeletalMesh::exportWithColliders(const char* output_path,
+                                           const Skeleton& skeleton,
+                                           const DrawMesh& collision_mesh,
+                                           const aiScene* original_scene) {
+        // Build a new scene from scratch with skeleton and collision meshes only
+        aiScene* export_scene = new aiScene();
+
+        // Create materials for collision meshes
+        export_scene->mNumMaterials = collision_mesh.objects.size();
+        export_scene->mMaterials = new aiMaterial*[export_scene->mNumMaterials];
+
+        for (size_t i = 0; i < collision_mesh.objects.size(); i++) {
+            aiMaterial* collision_mat = new aiMaterial();
+            aiString mat_name("CollisionMaterial_" + std::to_string(i));
+            collision_mat->AddProperty(&mat_name, AI_MATKEY_NAME);
+
+            const auto& mat = collision_mesh.objects[i].material;
+            aiColor3D diffuse(mat.diffuse.r, mat.diffuse.g, mat.diffuse.b);
+            collision_mat->AddProperty(&diffuse, 1, AI_MATKEY_COLOR_DIFFUSE);
+
+            float opacity = mat.opacity;
+            collision_mat->AddProperty(&opacity, 1, AI_MATKEY_OPACITY);
+
+            export_scene->mMaterials[i] = collision_mat;
+        }
+
+        // Create collision meshes
+        export_scene->mNumMeshes = collision_mesh.objects.size();
+        export_scene->mMeshes = new aiMesh*[export_scene->mNumMeshes];
+
+        for (size_t i = 0; i < collision_mesh.objects.size(); i++) {
+            const auto& obj = collision_mesh.objects[i];
+            const auto& shape = obj.shape;
+
+            aiMesh* ai_collision = new aiMesh();
+            ai_collision->mName = aiString("Collider_" + std::to_string(i));
+            ai_collision->mMaterialIndex = i;
+            ai_collision->mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
+
+            // Read back vertex data from GPU buffers
+            std::vector<glm::vec3> positions(shape.numTriangles * 3);
+            std::vector<glm::vec3> normals(shape.numTriangles * 3);
+            std::vector<BoneIDs> bone_ids(shape.numTriangles * 3);
+            std::vector<BoneWeights> bone_weights(shape.numTriangles * 3);
+
+            glBindVertexArray(shape.vao);
+
+            // Read positions (attribute 0)
+            GLuint vbo_pos;
+            glGetVertexAttribIuiv(0, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo_pos);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
+            glGetBufferSubData(GL_ARRAY_BUFFER, 0, positions.size() * sizeof(glm::vec3), positions.data());
+
+            // Read normals (attribute 1)
+            GLuint vbo_normal;
+            glGetVertexAttribIuiv(1, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo_normal);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_normal);
+            glGetBufferSubData(GL_ARRAY_BUFFER, 0, normals.size() * sizeof(glm::vec3), normals.data());
+
+            // Read bone IDs and weights
+            GLuint vbo_bone_ids, vbo_bone_weights;
+            glGetVertexAttribIuiv(3, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo_bone_ids);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_bone_ids);
+            glGetBufferSubData(GL_ARRAY_BUFFER, 0, bone_ids.size() * sizeof(BoneIDs), bone_ids.data());
+
+            glGetVertexAttribIuiv(4, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo_bone_weights);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_bone_weights);
+            glGetBufferSubData(GL_ARRAY_BUFFER, 0, bone_weights.size() * sizeof(BoneWeights), bone_weights.data());
+
+            glBindVertexArray(0);
+
+            // Populate aiMesh vertices
+            ai_collision->mNumVertices = positions.size();
+            ai_collision->mVertices = new aiVector3D[ai_collision->mNumVertices];
+            ai_collision->mNormals = new aiVector3D[ai_collision->mNumVertices];
+
+            for (size_t v = 0; v < positions.size(); v++) {
+                ai_collision->mVertices[v] = aiVector3D(positions[v].x, positions[v].y, positions[v].z);
+                ai_collision->mNormals[v] = aiVector3D(normals[v].x, normals[v].y, normals[v].z);
+            }
+
+            // Create faces
+            ai_collision->mNumFaces = shape.numTriangles;
+            ai_collision->mFaces = new aiFace[ai_collision->mNumFaces];
+
+            for (unsigned int f = 0; f < shape.numTriangles; f++) {
+                aiFace& face = ai_collision->mFaces[f];
+                face.mNumIndices = 3;
+                face.mIndices = new unsigned int[3];
+                face.mIndices[0] = f * 3;
+                face.mIndices[1] = f * 3 + 1;
+                face.mIndices[2] = f * 3 + 2;
+            }
+
+            // Add bones to collision mesh
+            std::unordered_map<unsigned int, std::vector<std::pair<unsigned int, float>>> bone_vertex_map;
+
+            for (size_t v = 0; v < bone_ids.size(); v++) {
+                for (int b = 0; b < MAX_BONES_PER_VERTEX; b++) {
+                    if (bone_weights[v][b] > 0.0f) {
+                        bone_vertex_map[bone_ids[v][b]].emplace_back(v, bone_weights[v][b]);
+                    }
+                }
+            }
+
+            ai_collision->mNumBones = bone_vertex_map.size();
+            ai_collision->mBones = new aiBone*[ai_collision->mNumBones];
+
+            size_t bone_idx = 0;
+            for (const auto& [bone_id, weights] : bone_vertex_map) {
+                const auto& skel_bone = skeleton.bones_[bone_id];
+
+                aiBone* ai_bone = new aiBone();
+                ai_bone->mName = aiString(skel_bone.name);
+                ai_bone->mOffsetMatrix = util::glmToAiMat4(skel_bone.offset_matrix);
+                ai_bone->mNumWeights = weights.size();
+                ai_bone->mWeights = new aiVertexWeight[weights.size()];
+
+                for (size_t w = 0; w < weights.size(); w++) {
+                    ai_bone->mWeights[w].mVertexId = weights[w].first;
+                    ai_bone->mWeights[w].mWeight = weights[w].second;
+                }
+
+                ai_collision->mBones[bone_idx++] = ai_bone;
+            }
+
+            // Debug: verify bone setup for first collision mesh
+            if (i == 0) {
+                debug::print("  Collider_0 bone references:");
+                for (size_t b = 0; b < ai_collision->mNumBones; b++) {
+                    debug::print("    - " + std::string(ai_collision->mBones[b]->mName.C_Str()) +
+                               " (" + std::to_string(ai_collision->mBones[b]->mNumWeights) + " weights)");
+                }
+            }
+
+            export_scene->mMeshes[i] = ai_collision;
+        }
+
+        // Build skeleton hierarchy as aiNodes
+        // Important: We need to export ALL bones in the skeleton as nodes,
+        // not just bones referenced by collision meshes, because animations
+        // reference bones by node name in the hierarchy
+        export_scene->mRootNode = new aiNode("RootNode");
+        export_scene->mRootNode->mTransformation = aiMatrix4x4(); // Identity transform
+
+        // Create bone nodes recursively - this will create ALL bones in the skeleton
+        std::function<aiNode*(const Bone&)> createBoneNode = [&](const Bone& bone) -> aiNode* {
+            aiNode* node = new aiNode(bone.name);
+            node->mTransformation = util::glmToAiMat4(bone.local_transform);
+
+            // Add children recursively
+            if (!bone.children.empty()) {
+                node->mNumChildren = bone.children.size();
+                node->mChildren = new aiNode*[node->mNumChildren];
+
+                for (size_t i = 0; i < bone.children.size(); i++) {
+                    const auto& child_bone = skeleton.bones_[bone.children[i]];
+                    aiNode* child_node = createBoneNode(child_bone);
+                    child_node->mParent = node;
+                    node->mChildren[i] = child_node;
+                }
+            }
+
+            return node;
+        };
+
+        // Find root bones (bones with parent_id == -1)
+        std::vector<const Bone*> root_bones;
+        for (const auto& bone : skeleton.bones_) {
+            if (bone.parent_id == -1) {
+                root_bones.push_back(&bone);
+            }
+        }
+
+        // If we have collision meshes, create a sibling node for them
+        // Otherwise just add skeleton nodes
+        if (collision_mesh.objects.empty()) {
+            // Just skeleton
+            export_scene->mRootNode->mNumChildren = root_bones.size();
+            export_scene->mRootNode->mChildren = new aiNode*[export_scene->mRootNode->mNumChildren];
+
+            for (size_t i = 0; i < root_bones.size(); i++) {
+                aiNode* bone_node = createBoneNode(*root_bones[i]);
+                bone_node->mParent = export_scene->mRootNode;
+                export_scene->mRootNode->mChildren[i] = bone_node;
+            }
+        } else {
+            // Skeleton + collision meshes
+            export_scene->mRootNode->mNumChildren = root_bones.size() + 1;
+            export_scene->mRootNode->mChildren = new aiNode*[export_scene->mRootNode->mNumChildren];
+
+            // Add skeleton hierarchy
+            for (size_t i = 0; i < root_bones.size(); i++) {
+                aiNode* bone_node = createBoneNode(*root_bones[i]);
+                bone_node->mParent = export_scene->mRootNode;
+                export_scene->mRootNode->mChildren[i] = bone_node;
+            }
+
+            // Add mesh node as sibling to skeleton with IDENTITY transform
+            // This is critical: skinned meshes must have identity transform so bone
+            // transformations work correctly during animation
+            aiNode* mesh_node = new aiNode("CollisionMeshes");
+            mesh_node->mTransformation = aiMatrix4x4(); // Identity matrix
+            mesh_node->mNumMeshes = collision_mesh.objects.size();
+            mesh_node->mMeshes = new unsigned int[mesh_node->mNumMeshes];
+            for (size_t i = 0; i < collision_mesh.objects.size(); i++) {
+                mesh_node->mMeshes[i] = i;
+            }
+            mesh_node->mParent = export_scene->mRootNode;
+            export_scene->mRootNode->mChildren[root_bones.size()] = mesh_node;
+        }
+
+        // Add animations
+        if (!skeleton.animations_.empty()) {
+            export_scene->mNumAnimations = skeleton.animations_.size();
+            export_scene->mAnimations = new aiAnimation*[export_scene->mNumAnimations];
+
+            debug::print("Exporting " + std::to_string(skeleton.animations_.size()) + " animation(s)");
+
+            size_t anim_idx = 0;
+            for (const auto& [anim_name, animation] : skeleton.animations_) {
+                aiAnimation* ai_anim = new aiAnimation();
+                ai_anim->mName = aiString(anim_name);
+                ai_anim->mDuration = animation.duration;
+                ai_anim->mTicksPerSecond = animation.ticks_per_second;
+
+                debug::print("  Animation '" + anim_name + "': " +
+                           std::to_string(animation.channels.size()) + " channels, " +
+                           "duration=" + std::to_string(animation.duration) + " ticks, " +
+                           "fps=" + std::to_string(animation.ticks_per_second));
+
+                // Create animation channels
+                ai_anim->mNumChannels = animation.channels.size();
+                ai_anim->mChannels = new aiNodeAnim*[ai_anim->mNumChannels];
+
+                size_t channel_idx = 0;
+                for (const auto& [bone_id, channel] : animation.channels) {
+                    aiNodeAnim* ai_channel = new aiNodeAnim();
+                    ai_channel->mNodeName = aiString(channel.bone_name);
+
+                    // Set animation behavior for looping
+                    ai_channel->mPreState = aiAnimBehaviour_DEFAULT;
+                    ai_channel->mPostState = aiAnimBehaviour_DEFAULT;
+
+                    // Position keys
+                    ai_channel->mNumPositionKeys = channel.position_keys.size();
+                    if (ai_channel->mNumPositionKeys > 0) {
+                        ai_channel->mPositionKeys = new aiVectorKey[ai_channel->mNumPositionKeys];
+                        for (size_t i = 0; i < channel.position_keys.size(); i++) {
+                            const auto& pos_key = channel.position_keys[i];
+                            ai_channel->mPositionKeys[i].mTime = pos_key.time;
+                            ai_channel->mPositionKeys[i].mValue = aiVector3D(pos_key.value.x, pos_key.value.y, pos_key.value.z);
+                            ai_channel->mPositionKeys[i].mInterpolation = aiAnimInterpolation_Linear;
+                        }
+                    }
+
+                    // Rotation keys
+                    ai_channel->mNumRotationKeys = channel.rotation_keys.size();
+                    if (ai_channel->mNumRotationKeys > 0) {
+                        ai_channel->mRotationKeys = new aiQuatKey[ai_channel->mNumRotationKeys];
+                        for (size_t i = 0; i < channel.rotation_keys.size(); i++) {
+                            const auto& rot_key = channel.rotation_keys[i];
+                            ai_channel->mRotationKeys[i].mTime = rot_key.time;
+                            // glm::quat is (w, x, y, z), aiQuaternion is (w, x, y, z)
+                            ai_channel->mRotationKeys[i].mValue = aiQuaternion(rot_key.value.w, rot_key.value.x, rot_key.value.y, rot_key.value.z);
+                            ai_channel->mRotationKeys[i].mInterpolation = aiAnimInterpolation_Linear;
+                        }
+                    }
+
+                    // Scale keys
+                    ai_channel->mNumScalingKeys = channel.scale_keys.size();
+                    if (ai_channel->mNumScalingKeys > 0) {
+                        ai_channel->mScalingKeys = new aiVectorKey[ai_channel->mNumScalingKeys];
+                        for (size_t i = 0; i < channel.scale_keys.size(); i++) {
+                            const auto& scale_key = channel.scale_keys[i];
+                            ai_channel->mScalingKeys[i].mTime = scale_key.time;
+                            ai_channel->mScalingKeys[i].mValue = aiVector3D(scale_key.value.x, scale_key.value.y, scale_key.value.z);
+                            ai_channel->mScalingKeys[i].mInterpolation = aiAnimInterpolation_Linear;
+
+                        }
+                    }
+
+                    ai_anim->mChannels[channel_idx++] = ai_channel;
+                }
+
+                export_scene->mAnimations[anim_idx++] = ai_anim;
+            }
+        }
+
+        // Export FBX with compatibility settings
+        // NOTE: This export is verified to work correctly in Blender.
+        // Some FBX viewers may have issues due to:
+        // 1. Assimp's FBX exporter doesn't use Autodesk's official FBX SDK
+        // 2. Viewer-specific skinning implementation differences
+        // 3. Different handling of node hierarchies with skinned meshes
+        //
+        // Available export formats:
+        // - "fbx"  = Binary FBX (smaller files, faster)
+        // - "fbxa" = ASCII FBX (human-readable, sometimes better compatibility)
+        //
+        // If importing into Unity/Unreal and animations don't play correctly:
+        // - Re-export from Blender as FBX 2020 (File > Export > FBX)
+        // - Adjust import settings for "Preserve Hierarchy"
+        // - Enable "Import Animations" and "Import Blend Shapes/Normals"
+        //
+        // Workaround: Open the exported FBX in Blender, then re-export as FBX 2020.
+        // This converts to Autodesk FBX SDK format and resolves most viewer issues.
+        Assimp::Exporter exporter;
+
+        // Try binary format first (more compact)
+        // If you experience issues with specific viewers, change "fbx" to "fbxa"
+        const char* export_format = "fbx";  // or "fbxa" for ASCII format
+        aiReturn result = exporter.Export(export_scene, export_format, output_path, 0);
+
+        if (result != AI_SUCCESS) {
+            debug::error("Failed to export FBX: " + std::string(exporter.GetErrorString()));
+        } else {
+            debug::print("Successfully exported colliders to: " + std::string(output_path));
+            debug::print("Export format: " + std::string(export_format));
+            debug::print("Scene summary:");
+            debug::print("  - Skeleton bones: " + std::to_string(skeleton.bones_.size()));
+            debug::print("  - Collision meshes: " + std::to_string(collision_mesh.objects.size()));
+            debug::print("  - Animations: " + std::to_string(export_scene->mNumAnimations));
+            debug::print("  - Materials: " + std::to_string(export_scene->mNumMaterials));
+        }
+
+        delete export_scene;
     }
 }

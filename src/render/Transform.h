@@ -14,6 +14,7 @@ namespace gl {
         void rotateDegrees(float angle_degrees, glm::vec3 axis);
 
         glm::mat4 getModelMatrix() const;
+        glm::vec3 getScale() const;
 
 
     private:

@@ -51,4 +51,7 @@ namespace gl {
         return model;
     }
 
+    glm::vec3 Transform::getScale() const {
+        return scale_;
+    }
 }
