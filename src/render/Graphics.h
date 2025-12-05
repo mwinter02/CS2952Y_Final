@@ -1,9 +1,11 @@
 #pragma once
+
 #include "Texture.h"
 #include "Transform.h"
 
 
 namespace gl {
+    struct Skeleton;
     struct SkinnedMesh;
     class Camera;
     class ShaderProgram;
@@ -49,6 +51,7 @@ namespace gl {
 
         static void drawObject(const DrawShape* drawShape, const Transform& transform, const DrawMaterial& material = defaultMaterial);
         static void drawMesh(const DrawMesh* draw_mesh, const Transform& transform);
+        static void drawSkinned(const DrawMesh& draw_mesh, Skeleton& skeleton, const Transform& transform);
         static void drawSkinned(SkinnedMesh* skinned_mesh, const Transform& transform);
 
         static const DrawShape* getShape(const std::string& shape_name);

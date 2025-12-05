@@ -20,6 +20,9 @@ target_compile_definitions(StaticGLEW PUBLIC GLEW_STATIC)
 add_library(stb_image STATIC External/stb/stb_image_impl.cpp)
 target_include_directories(stb_image PUBLIC External/stb)
 
+add_library(quickhull STATIC External/quickhull/QuickHull.cpp)
+target_include_directories(quickhull PUBLIC External/quickhull)
+
 target_include_directories(imgui PUBLIC External/imgui)
 
 file(GLOB_RECURSE SOURCE_FILES src/*.cpp src/*.h)
@@ -35,6 +38,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         stb_image
         imgui
         nfd
+        quickhull
 )
 
 # Platform\-specific system libs / frameworks

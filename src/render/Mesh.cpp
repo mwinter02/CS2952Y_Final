@@ -216,15 +216,13 @@ namespace gl {
         float threshold = std::clamp(1.f-quality, 0.01f, 1.f);
         std::string full_path = util::getPath(file_name);
         std::string directory = util::getDirectory(file_name);
-        std::string json_name = directory + "/coacd_temp.json";
 
-        // if (!generateCoacdJson(file_name, json_name.c_str(), threshold)) {
-        //     debug::error("Failed to generate coacd json file for: " + full_path);
-        //     debug::error("Ensure CoACD + trimesh is installed, use 'pip install coacd trimesh'");
-        //     return DrawMesh{};
-        // }
-
-        std::string output_name = directory + "/" + util::getStem(full_path) + "_collider.obj";
+        std::string output_name = file_name;
+        if (util::removeExtension(output_name) != ".obj") {
+            debug::error("Input file must be an OBJ file for decomposition: " + full_path);
+            return DrawMesh{};
+        }
+        output_name += "_collider.obj";
 
 
         if (!generateObjPyScript(file_name, output_name.c_str(), threshold)) {
@@ -234,7 +232,11 @@ namespace gl {
         }
         // coacdJsonToObj(util::getPath(json_name).c_str(), util::getPath(output_name.c_str()).c_str());
 
-        auto mesh = loadStaticMesh(output_name.c_str());
+        return loadColliderMeshObj(output_name.c_str());
+    }
+
+    DrawMesh Mesh::loadColliderMeshObj(const char* filename) {
+        auto mesh = loadStaticMesh(filename);
         setAllMaterials(mesh, colliderMaterial);
 
         auto colors = getRainbow(mesh.objects.size());
@@ -244,7 +246,6 @@ namespace gl {
             auto color = colors[i];
             obj.material = getColliderMaterial(color);
         }
-
         return mesh;
     }
 

@@ -12,23 +12,21 @@
 #include "render/SkeletalMesh.h"
 
 
-// static gl::SkinnedMesh skinned_mesh;
-// static gl::Transform skinned_transform;
+static gl::SkinnedMesh skinned_mesh;
+static gl::Transform skinned_transform;
 
 
 
 Core::Core() : camera_(std::make_shared<gl::Camera>()), light_(std::make_shared<gl::Light>()) {
     light_->position = glm::vec3(0, 5, 0);
 
-    auto obj_path = "Resources/Models/Spider/spider.obj";
     // obj_mesh = gl::Mesh::loadStaticMesh(obj_path);
     // coacd_mesh = gl::Mesh::decomposeObj(obj_path, 0.9);
     // obj_transform.setScale(glm::vec3(0.01f));
 
-    // skinned_mesh = gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx");
-    // skinned_mesh.skeleton.setCurrentAnimation("Take 001");
-    // skinned_transform.rotateDegrees(30, glm::vec3(0,1,0));
-    // skinned_transform.setScale(glm::vec3(0.01));
+    skinned_mesh = gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx");
+    skinned_mesh.skeleton.setCurrentAnimation("Take 001");
+    skinned_transform.setScale(glm::vec3(0.01));
 
     // obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
     // obj_transform.setScale(glm::vec3(0.01));
@@ -94,11 +92,17 @@ void Core::draw() {
 
     drawCurrentObject();
 
+    gl::Graphics::useSkinnedShader();
     gl::Graphics::setCameraUniforms(camera_.get());
     gl::Graphics::setLight(*light_);
-    // gl::Graphics::useSkinnedShader();
-    // skinned_mesh.skeleton.playCurrentAnimation(Window::getCurrentTime());
-    // gl::Graphics::drawSkinned(&skinned_mesh, skinned_transform);
+    skinned_mesh.skeleton.playCurrentAnimation(Window::getCurrentTime());
+    gl::Graphics::drawSkinned(skinned_mesh.draw_mesh, skinned_mesh.skeleton, skinned_transform);
+    glPolygonMode(GL_FRONT, GL_FILL);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);  // Disable depth writes
+    glEnable(GL_BLEND);     // Already enabled in applyGLSettings, but making it explicit
+    gl::Graphics::drawSkinned(skinned_mesh.collision_mesh, skinned_mesh.skeleton, skinned_transform);
+    glDepthMask(GL_TRUE);
     drawGUI();
 }
 

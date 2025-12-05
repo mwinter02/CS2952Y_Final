@@ -5,6 +5,8 @@
 #include "Graphics.h"
 #include "glm/glm.hpp"
 
+struct aiScene;
+
 namespace gl {
 
 #define MAX_BONES_PER_VERTEX 4
@@ -17,8 +19,10 @@ namespace gl {
         int parent_id;                 // Parent bone index (-1 for root)
         glm::mat4 offset_matrix;       // Inverse bind pose - transforms from mesh space to bone space
         glm::mat4 local_transform;   // Local transform relative to parent bone
-        const glm::mat4 bind_pose_transform; // Bind pose local transform
+        glm::mat4 bind_pose_transform; // Bind pose local transform (immutable after construction)
         std::vector<unsigned int> children;     // Indices of child bones
+
+        std::unordered_map<unsigned int, float> vertex_weights; // vertex_id -> weight
 
         Bone(const std::string& bone_name, const unsigned int bone_id, const int parent,
             const glm::mat4& offset, const glm::mat4& bind_pose_transform) :
@@ -86,12 +90,19 @@ namespace gl {
         std::unordered_map<std::string, unsigned int> bone_map_;
         std::vector<glm::mat4> bone_matrices_;
 
+        std::vector<glm::vec3> vertices_;
+        std::vector<glm::ivec3> faces_;
+        std::unordered_map<unsigned int, std::vector<unsigned int>> vertex_to_boneID_map_;
+
         std::unordered_map<std::string, Animation> animations_;
         Animation* current_animation_ = nullptr;
+
+        // Heuristic of bone_importance = sum(weight for each vertice)
     };
 
     struct SkinnedMesh {
         DrawMesh draw_mesh;
+        DrawMesh collision_mesh;
         Skeleton skeleton;
     };
 
@@ -103,9 +114,10 @@ namespace gl {
 
     class SkeletalMesh {
     public:
-
-
+        static void exportWithColliders(const char* output_path, const Skeleton& skeleton, const DrawMesh& collision_mesh,
+                                 const aiScene* original_scene);
         static SkinnedMesh loadFbx(const char* filename);
+        static DrawMesh decomposeSkeleton(const Skeleton& skeleton);
 
 
 

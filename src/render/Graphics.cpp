@@ -76,6 +76,22 @@ namespace gl {
 
     }
 
+    void Graphics::drawSkinned(const DrawMesh& draw_mesh, Skeleton& skeleton, const Transform& transform) {
+        const auto model_matrix = transform.getModelMatrix();
+        active_shader_->setMat4("model", model_matrix);
+        active_shader_->setMat3("normal", glm::transpose(glm::inverse(glm::mat3(model_matrix))));
+
+        skeleton.updateBoneMatrices();
+        active_shader_->setMat4Vec("gBones", skeleton.num_bones_, skeleton.bone_matrices_);
+
+        for (const auto& [shape, material] : draw_mesh.objects) {
+            setMaterialUniforms(material);
+            glBindVertexArray(shape.vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3 * shape.numTriangles);
+            glBindVertexArray(0);
+        }
+    }
+
     void Graphics::drawSkinned(SkinnedMesh* skinned_mesh, const Transform& transform) {
         const auto model_matrix = transform.getModelMatrix();
         active_shader_->setMat4("model", model_matrix);
@@ -83,15 +99,24 @@ namespace gl {
 
 
         const auto& draw_mesh = skinned_mesh->draw_mesh;
+        const auto& collision_mesh = skinned_mesh->collision_mesh;
 
         auto& skeleton = skinned_mesh->skeleton;
 
         skeleton.updateBoneMatrices();
         active_shader_->setMat4Vec("gBones", skeleton.num_bones_, skeleton.bone_matrices_);
+
         for (const auto& obj : draw_mesh.objects) {
             setMaterialUniforms(obj.material);
             glBindVertexArray(obj.shape.vao);
             glDrawArrays(GL_TRIANGLES, 0, 3 * obj.shape.numTriangles);
+            glBindVertexArray(0);
+        }
+
+        for (const auto& [shape, material] : collision_mesh.objects) {
+            setMaterialUniforms(material);
+            glBindVertexArray(shape.vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3 * shape.numTriangles);
             glBindVertexArray(0);
         }
 

@@ -54,6 +54,8 @@ namespace util {
         return std::filesystem::path(filename).stem().string();
     }
 
+
+
     /**
      * Fixes path separators to be correct for the current OS
      * @param path - The path to fix
@@ -70,6 +72,27 @@ namespace util {
 #else
         std::ranges::replace(path, '\\', '/');
 #endif
+    }
+
+    /**
+     * Removes the extension from a filename string
+     * @param filename The filename to remove the extension from
+     * @return The extension that was removed (including the dot), e.g ".txt"
+     */
+    static std::string removeExtension(std::string& filename) {
+        fixPath(filename);
+        std::string ext = filename.substr(filename.find_last_of("."));
+        filename = filename.substr(0, filename.find_last_of('.'));
+        return ext;
+    }
+
+    inline aiMatrix4x4 glmToAiMat4(const glm::mat4& mat) {
+        return aiMatrix4x4(
+            mat[0][0], mat[1][0], mat[2][0], mat[3][0],
+            mat[0][1], mat[1][1], mat[2][1], mat[3][1],
+            mat[0][2], mat[1][2], mat[2][2], mat[3][2],
+            mat[0][3], mat[1][3], mat[2][3], mat[3][3]
+        );
     }
 
 
