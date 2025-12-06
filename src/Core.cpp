@@ -38,15 +38,7 @@ Core::Core() : camera_(std::make_shared<gl::Camera>()), light_(std::make_shared<
     );
     camera_->setPosition(pos);
     camera_->setLook(glm::normalize(orbit_target - pos));
-
     Window::setClearColor(glm::vec3(.5f));
-
-    gl::SkeletalMesh::loadFbx("Resources/Models/Dragon/Dragon 2.5_fbx.fbx");
-
-
-    // obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
-    // obj_transform.setScale(glm::vec3(0.01));
-
 }
 
 
