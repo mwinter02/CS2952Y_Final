@@ -93,6 +93,7 @@ def run_coacd_on_file(
     mcts_max_depth: int = 3,
     pca: bool = False,
     approximate_mode: str = "ch",
+    extrude_margin: float = 0.0,
 ):
     """Run CoACD on a single mesh file and return the list of parts.
 
@@ -106,6 +107,7 @@ def run_coacd_on_file(
         mcts_max_depth: MCTS max depth for search.
         pca: Use PCA for initial partitioning.
         approximate_mode: Approximation mode - "ch" for convex hull, "box" for bounding boxes.
+        extrude_margin: Margin to inflate(+)/deflate(-) hulls. Applied as post-processing.
     """
     mesh = trimesh.load(str(input_path), force="mesh")
 
@@ -116,6 +118,8 @@ def run_coacd_on_file(
 
     cmesh = coacd_mesh_from_trimesh(mesh)
 
+    # NOTE: CoACD does NOT have extrude/extrude_margin parameters
+    # We apply scaling post-processing instead
     parts = coacd.run_coacd(
         cmesh,
         threshold=threshold,
@@ -127,6 +131,35 @@ def run_coacd_on_file(
         mcts_max_depth=mcts_max_depth,
         pca=pca,
     )
+
+    # Post-process: Apply extrusion by scaling hulls from their centroid
+    if extrude_margin != 0.0:
+        processed_parts = []
+        for part in parts:
+            vertices, faces = coacd_part_to_arrays(part)
+
+            # Calculate centroid
+            centroid = vertices.mean(axis=0)
+
+            # Calculate scale factor based on extrude margin
+            # For a typical mesh of size ~10 units, 0.1 margin = 1% expansion
+            # We approximate by calculating average distance from centroid
+            distances = np.linalg.norm(vertices - centroid, axis=1)
+            avg_distance = distances.mean()
+
+            if avg_distance > 0:
+                # Scale factor: (avg_distance + margin) / avg_distance
+                scale_factor = (avg_distance + extrude_margin) / avg_distance
+
+                # Scale vertices from centroid
+                scaled_vertices = centroid + (vertices - centroid) * scale_factor
+
+                processed_parts.append((scaled_vertices, faces))
+            else:
+                # Degenerate hull, keep as-is
+                processed_parts.append((vertices, faces))
+
+        parts = processed_parts
 
     # Post-process parts based on approximate mode
     if approximate_mode == "box":
@@ -245,6 +278,12 @@ def main() -> None:
         choices=["ch", "box"],
         help="Approximation mode: 'ch' for convex hull (default), 'box' for axis-aligned bounding boxes.",
     )
+    parser.add_argument(
+        "--extrude-margin",
+        type=float,
+        default=0.0,
+        help="Post-processing: Scale hulls from centroid. Positive = expand, negative = contract (default 0.0).",
+    )
 
     args = parser.parse_args()
     in_path = Path(args.input)
@@ -266,12 +305,15 @@ def main() -> None:
         mcts_max_depth=args.mcts_max_depth,
         pca=args.pca,
         approximate_mode=args.approximate_mode,
+        extrude_margin=args.extrude_margin,
     )
     write_parts_as_obj(parts, out_path)
 
     print(f"Wrote CoACD decomposition OBJ for {in_path} -> {out_path}")
     print(f"  Mode: {'Convex Hulls' if args.approximate_mode == 'ch' else 'Bounding Boxes'}")
     print(f"  Parts: {len(parts)}")
+    if args.extrude_margin != 0.0:
+        print(f"  Scaled by margin: {args.extrude_margin:+.3f} units")
 
 
 if __name__ == "__main__":  # pragma: no cover

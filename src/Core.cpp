@@ -65,6 +65,7 @@ void Core::resetCamera() {
     camera_->setLook(glm::normalize(orbit_target - pos));
 }
 
+
 glm::mat4 getRotation() {
     auto rotation = glm::mat4(1.0f);
     rotation = glm::rotate(rotation, glm::radians(s_rotation.x), {1,0,0});
@@ -102,6 +103,7 @@ void Core::loadNewMesh(const std::string& path) {
     skinned_mesh_.reset();
     static_mesh_.reset();
     collider_.reset();
+    render_options_= RenderOptions();
 }
 
 void Core::updateTransform() {
@@ -116,15 +118,16 @@ void Core::guiColliderOutput() {
     if (collider_) {
         auto collider_path = info_.object_path;
         auto extension = util::removeExtension(collider_path);
-        collider_path += "_collider" + extension;
-        std::string text = "Collider outputted to: " + collider_path;
+        auto stem = util::getStem(info_.object_path);
+        auto directory = util::getDirectory(info_.object_path);
+        collider_path = directory + "/Colliders/" + stem + "_collider" + extension;
         ImGui::Text("Collider outputted to:");
-        ImGui::Text("%s", collider_path.c_str());
+        ImGui::TextColored({0.2,0.7,0.2,1},"%s", collider_path.c_str());
     }
 }
 
 void Core::guiCoacdParams() {
-    ImGui::SliderFloat("Threshold", &params_.threshold, 0.f, 1.f);
+    ImGui::SliderFloat("Threshold", &params_.threshold, 0.01f, 1.f);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Concavity threshold. Lower values produce more accurate colliders but result in more convex pieces and is slower");
     ImGui::SliderInt("Resolution", &params_.resolution, 100, 10000);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Surface sampling resolution. Higher values create smoother convex hulls with better surface detail");
@@ -132,6 +135,9 @@ void Core::guiCoacdParams() {
     // Custom display for Max Convex Hulls slider to show infinity symbol
     ImGui::SliderInt("Max Convex Hulls", &params_.max_convex_hull, -1, 100, params_.max_convex_hull == -1 ? "Unlimited" : "%d");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Limits the number of generated convex hulls. Useful for performance budgets in game engines");
+
+    ImGui::SliderFloat("Extrude", &params_.extrude, -0.2f, 0.2f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Extrudes the convex hulls outward (positive values) or inward (negative values)");
 
 }
 

@@ -19,6 +19,7 @@ struct DecompParameters {
         float threshold = 0.5f;
         int resolution = 2000;
         int max_convex_hull = -1;
+        float extrude = 0.0f;
         bool aab_mode = false;
 };
 

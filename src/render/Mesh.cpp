@@ -278,6 +278,13 @@ namespace gl {
             std::strncat(cmd, hull_arg, sizeof(cmd) - strlen(cmd) - 1);
         }
 
+        // Add extrude-margin if non-zero (applied as post-processing in Python)
+        if (params.extrude != 0.0f) {
+            char extrude_args[256];
+            std::snprintf(extrude_args, sizeof(extrude_args), " --extrude-margin %.6f", params.extrude);
+            std::strncat(cmd, extrude_args, sizeof(cmd) - strlen(cmd) - 1);
+        }
+
         debug::print("Running CoACD preprocessor: ");
         debug::print(cmd);
 
