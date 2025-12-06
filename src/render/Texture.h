@@ -1,5 +1,7 @@
 #pragma once
 #include "GL/glew.h"
+#include <string>
+#include <memory>
 
 struct aiScene;
 struct aiString;

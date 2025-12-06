@@ -28,6 +28,10 @@ target_include_directories(imgui PUBLIC External/imgui)
 file(GLOB_RECURSE SOURCE_FILES src/*.cpp src/*.h)
 add_executable(${PROJECT_NAME} main.cpp ${SOURCE_FILES})
 
+target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/External
+)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
         glfw
         StaticGLEW

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "glm/fwd.hpp"
+#include <string>
 #include <vector>
 
 class Mesh {

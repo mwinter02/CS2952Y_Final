@@ -11,6 +11,11 @@
 #include <fstream>
 #include "../Core.h"
 
+#ifdef _WIN32
+const char* python_cmd = "python";
+#else
+    const char* python_cmd = "python3";
+#endif
 
 
 namespace gl {
@@ -215,6 +220,9 @@ namespace gl {
     DrawMesh Mesh::decomposeObj(const char* file_name, const DecompParameters& params) {
 
         std::string full_path = util::getPath(file_name);
+        //std::string full_path = util::getPath(file_name);
+        //std::string full_path = file_name;
+
         std::string directory = util::getDirectory(file_name);
 
         auto stem = util::getStem(file_name);
@@ -247,7 +255,6 @@ namespace gl {
         return mesh;
     }
 
-
     bool Mesh::generateObjPyScript(
         const char* obj_path,
         const char* output_path,
@@ -256,6 +263,7 @@ namespace gl {
         std::string obj_fs = util::getPath(obj_path);
         std::string output_fs = util::getPath(output_path);
         std::string script_fs = util::getPath("src/python/coacd_preprocess.py");
+        std::string metrics_fs = util::getPath("Resources/Metrics/metrics.json");
 
         // Build command with CoACD parameters
         char cmd[4096];
@@ -263,13 +271,15 @@ namespace gl {
         std::string approximate_mode = params.aab_mode ? "box" : "ch";
 
         std::snprintf(cmd, sizeof(cmd),
-                      "python3 \"%s\" \"%s\" \"%s\" --threshold %f --resolution %d --approximate-mode %s",
+                      "%s \"%s\" \"%s\" \"%s\" --threshold %f --resolution %d --approximate-mode %s --metrics_file %s",
+                      python_cmd,
                       script_fs.c_str(),
                       obj_fs.c_str(),
                       output_fs.c_str(),
                       params.threshold,
                       params.resolution,
-                      approximate_mode.c_str());
+                      approximate_mode.c_str(),
+                      metrics_fs.c_str());
 
         // Add max-convex-hull if specified (not -1)
         if (params.max_convex_hull > 0) {
@@ -285,10 +295,9 @@ namespace gl {
             std::strncat(cmd, extrude_args, sizeof(cmd) - strlen(cmd) - 1);
         }
 
-        debug::print("Running CoACD preprocessor: ");
         debug::print(cmd);
-
         int ret = std::system(cmd);
+
         if (ret != 0) {
             debug::print("CoACD preprocessor failed with exit code: ");
             debug::print(std::to_string(ret));

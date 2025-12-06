@@ -13,6 +13,7 @@ namespace util {
      * @return The absolute path to the file from your computer's root directory
      */
     static std::string getPath(const char* path_from_root) {
+        // TODO: remove this change
         std::string full_path = std::string(PROJECT_ROOT) + "/" + path_from_root;
         return full_path;
     }

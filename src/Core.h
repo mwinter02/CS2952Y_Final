@@ -1,6 +1,4 @@
 #pragma once
-#include <string>
-
 #include "render/Graphics.h"
 #include "render/SkeletalMesh.h"
 
@@ -65,6 +63,7 @@ private:
     void guiColliderOutput();
     void guiCoacdParams();
     void guiStatic();
+    void guiMetrics();
     void setAnimation(int index);
     std::vector<unsigned int> getCustomBones();
     void guiCustomBones();

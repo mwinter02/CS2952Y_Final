@@ -1,7 +1,12 @@
 import argparse
 from pathlib import Path
+import json
 
 import numpy as np
+
+# Compatibility shim for NumPy 2.x + older trimesh
+if not hasattr(np, "product"):
+    np.product = np.prod
 import trimesh  # type: ignore
 import coacd  # Python package: pip install coacd
 
@@ -203,8 +208,83 @@ def run_coacd_on_file(
 
         parts = processed_parts
 
-    return parts
+    return mesh, parts
 
+
+def compute_collider_metrics(orig_mesh: "trimesh.Trimesh", parts):
+    """Compute simple comparison metrics between original mesh and CoACD collider.
+
+    Metrics:
+      - volume_relative_diff = |V_C - V_M| / V_M
+      - surface_area_ratio   = A_C / A_M
+      - bbox_span_ratios     = spans_C / spans_M (per-axis)
+      - bbox_volume_ratio    = vol_AABB_C / vol_AABB_M
+    """
+    # Original mesh stats
+    V_M = float(orig_mesh.volume)
+    A_M = float(orig_mesh.area)
+    min_M, max_M = orig_mesh.bounds
+    spans_M = max_M - min_M  # (dx, dy, dz)
+
+    # Collider stats: treat union of parts as single collider
+    V_C = 0.0
+    A_C = 0.0
+    all_verts = []
+
+    for part in parts:
+        verts, faces = coacd_part_to_arrays(part)
+        all_verts.append(verts)
+
+        # Build a temporary trimesh for this part
+        tm_part = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+        V_C += float(tm_part.volume)
+        A_C += float(tm_part.area)
+
+    if len(all_verts) > 0:
+        all_verts = np.vstack(all_verts)
+        min_C = all_verts.min(axis=0)
+        max_C = all_verts.max(axis=0)
+    else:
+        # Degenerate case: no parts
+        min_C = np.zeros(3)
+        max_C = np.zeros(3)
+
+    spans_C = max_C - min_C
+
+    # Derived metrics
+    if V_M > 0.0:
+        volume_relative_diff = abs(V_C - V_M) / V_M
+    else:
+        volume_relative_diff = np.nan
+
+    if A_M > 0.0:
+        surface_area_ratio = A_C / A_M
+    else:
+        surface_area_ratio = np.nan
+
+    # Avoid division by zero in spans
+    with np.errstate(divide="ignore", invalid="ignore"):
+        bbox_span_ratios = spans_C / spans_M
+    # AABB volume ratios
+    vol_AABB_M = float(np.prod(spans_M))
+    vol_AABB_C = float(np.prod(spans_C))
+    if vol_AABB_M > 0.0:
+        bbox_volume_ratio = vol_AABB_C / vol_AABB_M
+    else:
+        bbox_volume_ratio = np.nan
+
+    return {
+        "V_M": V_M,
+        "V_C": V_C,
+        "A_M": A_M,
+        "A_C": A_C,
+        "volume_relative_diff": volume_relative_diff,
+        "surface_area_ratio": surface_area_ratio,
+        "bbox_span_ratios": bbox_span_ratios,
+        "bbox_volume_ratio": bbox_volume_ratio,
+        "bbox_spans_original": spans_M,
+        "bbox_spans_collider": spans_C,
+    }
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -282,7 +362,20 @@ def main() -> None:
         help="Percentage-based scaling. 0.1 = 10%% expansion, -0.1 = 10%% contraction (default 0.0).",
     )
 
+    parser.add_argument(
+        "--metrics_file",
+        type=str,
+        required=True,
+        help="Path to output JSON metrics file for C++ to read.",
+    )
+
     args = parser.parse_args()
+
+    # clean args.input for windows \\
+    args.input = args.input.replace("\\\\", "/")
+    args.output = args.output.replace("\\\\", "/")
+
+    print(args.input, args.output)
     in_path = Path(args.input)
     out_path = Path(args.output)
 
@@ -291,7 +384,7 @@ def main() -> None:
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    parts = run_coacd_on_file(
+    orig_mesh, parts = run_coacd_on_file(
         in_path,
         threshold=args.threshold,
         max_convex_hull=args.max_convex_hull,
@@ -306,12 +399,33 @@ def main() -> None:
     )
     write_parts_as_obj(parts, out_path)
 
+    orig_mesh, parts = run_coacd_on_file(in_path, threshold=args.threshold)
+    write_parts_as_obj(parts, out_path)
+
+    metrics = compute_collider_metrics(orig_mesh, parts)
+
+    # resolve metrics file path
+    metrics_path = Path(args.metrics_file)
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # convert numpy arrays to lists for JSON
+    def _to_serializable(x):
+        if hasattr(x, "tolist"):
+            return x.tolist()
+        return float(x) if isinstance(x, (np.floating, np.integer)) else x
+
+    serializable_metrics = {k: _to_serializable(v) for k, v in metrics.items()}
+
+    # write JSON metrics file
+    with metrics_path.open("w", encoding="utf-8") as f:
+        json.dump(serializable_metrics, f, indent=4)
+
+    print(f"Wrote metrics JSON to {metrics_path}")
     print(f"Wrote CoACD decomposition OBJ for {in_path} -> {out_path}")
     print(f"  Mode: {'Convex Hulls' if args.approximate_mode == 'ch' else 'Bounding Boxes'}")
     print(f"  Parts: {len(parts)}")
     if args.extrude_margin != 0.0:
         print(f"  Extrusion: {args.extrude_margin*100:+.1f}%")
-
 
 if __name__ == "__main__":  # pragma: no cover
     main()

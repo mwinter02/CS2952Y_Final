@@ -1,7 +1,7 @@
 #include "Core.h"
 
 #include <iostream>
-
+#include <fstream>
 
 #include "Debug.h"
 #include "imgui.h"
@@ -12,7 +12,9 @@
 #include "render/Camera.h"
 #include "render/Mesh.h"
 #include "render/SkeletalMesh.h"
+#include "nlohmann/json.hpp"
 
+using json = nlohmann::json;
 
 constexpr glm::vec3 initial_camera_position = glm::vec3(0.f, 15.f, 10.f);
 constexpr glm::vec2 initial_camera_rotation = glm::vec2(-45.f, 180.0f);
@@ -47,6 +49,60 @@ glm::vec2 s_scale_bounds;
 static glm::vec3 s_position;
 
 static glm::vec3 s_rotation = glm::vec3(0, 0, 0); // x y z rotation in degrees
+
+static glm::vec2 s_camera_rotation(-45.f, 180.0f);
+
+struct ColliderMetricsUI {
+    bool has_data = false;
+
+    float volume_relative_diff = 0.0f;
+    float surface_area_ratio   = 0.0f;
+    glm::vec3 bbox_span_ratios{0.0f}; // per-axis C/M span ratios
+};
+
+static ColliderMetricsUI s_collider_metrics;
+
+static void loadColliderMetricsFromFile(const std::string& path)
+{
+    s_collider_metrics.has_data = false;
+    std::string fullPath = util::getPath(path);
+
+    std::ifstream in(fullPath);
+    if (!in) {
+        debug::print("failed to open metrics file: " + fullPath);
+        return;
+    }
+
+    json j;
+    try {
+        in >> j;
+    } catch (const std::exception& e) {
+        debug::print(std::string("failed to parse metrics JSON: ") + e.what());
+        return;
+    }
+
+    auto get_or = [&](const char* key, float def) -> float {
+        if (j.contains(key) && j[key].is_number()) {
+            return j[key].get<float>();
+        }
+        return def;
+    };
+
+    s_collider_metrics.volume_relative_diff = get_or("volume_relative_diff", 0.0f);
+    s_collider_metrics.surface_area_ratio   = get_or("surface_area_ratio", 0.0f);
+
+    // bbox_span_ratios is a 3-element array [rx, ry, rz]
+    if (j.contains("bbox_span_ratios") &&
+        j["bbox_span_ratios"].is_array() &&
+        j["bbox_span_ratios"].size() == 3)
+    {
+        s_collider_metrics.bbox_span_ratios.x = j["bbox_span_ratios"][0].get<float>();
+        s_collider_metrics.bbox_span_ratios.y = j["bbox_span_ratios"][1].get<float>();
+        s_collider_metrics.bbox_span_ratios.z = j["bbox_span_ratios"][2].get<float>();
+    }
+
+    s_collider_metrics.has_data = true;
+}
 
 void Core::resetCamera() {
     orbit_azimuth = 0.0f;
@@ -211,6 +267,8 @@ void Core::guiStatic() {
             collider_.reset();
             collider_ = std::make_unique<gl::DrawMesh>(gl::Mesh::decomposeObj(info_.object_path.c_str(), params_));
             render_options_.show_collider = true;
+
+            loadColliderMetricsFromFile("Resources/Metrics/metrics.json");
         }
         ImGui::PopStyleColor();
         ImGui::SameLine();
@@ -223,6 +281,21 @@ void Core::guiStatic() {
             guiColliderOutput();
         }
     }
+}
+
+void Core::guiMetrics() {
+    ImGui::SeparatorText("Collider Metrics");
+
+    ImGui::Text("Volume rel. diff |V_C - V_M| / V_M: %.5f",
+                s_collider_metrics.volume_relative_diff);
+
+    ImGui::Text("Surface area ratio A_C / A_M: %.5f",
+                s_collider_metrics.surface_area_ratio);
+
+    ImGui::Text("BBox span ratios C/M: (%.3f, %.3f, %.3f)",
+                s_collider_metrics.bbox_span_ratios.x,
+                s_collider_metrics.bbox_span_ratios.y,
+                s_collider_metrics.bbox_span_ratios.z);
 }
 
 static int current_animation = 0;
@@ -390,6 +463,7 @@ void Core::drawGUI() {
 
     ImGui::Separator();
 
+    guiMetrics();
 
     // ImGui::Begin("GUI");
 
