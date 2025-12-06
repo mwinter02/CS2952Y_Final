@@ -780,10 +780,10 @@ namespace gl {
 
         Assimp::Importer importer;
         auto scene = importer.ReadFile(util::getPath(filename), SKINNED_IMPORT_PRESET);
-        std::string output = util::getPath(filename);
-        util::removeExtension(output);
-        output += "_collider.fbx";
-        exportWithColliders(output.c_str(), skeleton, mesh, scene);
+        std::string output = util::getDirectory(filename);
+        auto stem = util::getStem(filename);
+        output += "/Colliders/"+ stem + "_collider.fbx";
+        exportWithColliders(util::getPath(output).c_str(), skeleton, mesh, scene);
         return mesh;
     }
 

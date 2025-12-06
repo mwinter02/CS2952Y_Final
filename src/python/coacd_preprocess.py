@@ -107,7 +107,7 @@ def run_coacd_on_file(
         mcts_max_depth: MCTS max depth for search.
         pca: Use PCA for initial partitioning.
         approximate_mode: Approximation mode - "ch" for convex hull, "box" for bounding boxes.
-        extrude_margin: Margin to inflate(+)/deflate(-) hulls. Applied as post-processing.
+        extrude_margin: Percentage-based scale factor. 0.1 = 10% expansion, -0.1 = 10% contraction.
     """
     mesh = trimesh.load(str(input_path), force="mesh")
 
@@ -132,42 +132,14 @@ def run_coacd_on_file(
         pca=pca,
     )
 
-    # Post-process: Apply extrusion by scaling hulls from their centroid
-    if extrude_margin != 0.0:
-        processed_parts = []
-        for part in parts:
-            vertices, faces = coacd_part_to_arrays(part)
+    # Convert parts to arrays first (normalize the format)
+    parts = [coacd_part_to_arrays(part) for part in parts]
 
-            # Calculate centroid
-            centroid = vertices.mean(axis=0)
-
-            # Calculate scale factor based on extrude margin
-            # For a typical mesh of size ~10 units, 0.1 margin = 1% expansion
-            # We approximate by calculating average distance from centroid
-            distances = np.linalg.norm(vertices - centroid, axis=1)
-            avg_distance = distances.mean()
-
-            if avg_distance > 0:
-                # Scale factor: (avg_distance + margin) / avg_distance
-                scale_factor = (avg_distance + extrude_margin) / avg_distance
-
-                # Scale vertices from centroid
-                scaled_vertices = centroid + (vertices - centroid) * scale_factor
-
-                processed_parts.append((scaled_vertices, faces))
-            else:
-                # Degenerate hull, keep as-is
-                processed_parts.append((vertices, faces))
-
-        parts = processed_parts
-
-    # Post-process parts based on approximate mode
+    # Post-process parts based on approximate mode FIRST (before extrusion)
     if approximate_mode == "box":
         # Convert each convex hull to its axis-aligned bounding box
         box_parts = []
-        for part in parts:
-            vertices, faces = coacd_part_to_arrays(part)
-
+        for vertices, faces in parts:
             # Compute AABB (axis-aligned bounding box)
             min_bounds = vertices.min(axis=0)
             max_bounds = vertices.max(axis=0)
@@ -203,10 +175,35 @@ def run_coacd_on_file(
 
             box_parts.append((box_vertices, box_faces))
 
-        return box_parts
-    else:
-        # Return convex hulls as-is
-        return parts
+        parts = box_parts
+
+    # Post-process: Apply extrusion by scaling hulls from their centroid
+    # This is done AFTER box conversion so it applies to both convex hulls and boxes
+    if extrude_margin != 0.0:
+        processed_parts = []
+        print(f"\nApplying extrusion margin: {extrude_margin}")
+        for idx, (vertices, faces) in enumerate(parts):
+            # Calculate centroid
+            centroid = vertices.mean(axis=0)
+
+            # Use percentage-based scaling instead of absolute margin
+            # This ensures consistent behavior across different mesh scales
+            # extrude_margin is now interpreted as a percentage:
+            #   0.1 = 10% expansion, -0.1 = 10% contraction
+            scale_factor = 1.0 + extrude_margin
+
+            # Debug output
+            if idx < 3:  # Only print first 3 parts to avoid spam
+                print(f"  Part {idx}: scale_factor={scale_factor:.4f} ({extrude_margin*100:+.1f}%)")
+
+            # Scale vertices from centroid
+            scaled_vertices = centroid + (vertices - centroid) * scale_factor
+
+            processed_parts.append((scaled_vertices, faces))
+
+        parts = processed_parts
+
+    return parts
 
 
 def main() -> None:
@@ -282,7 +279,7 @@ def main() -> None:
         "--extrude-margin",
         type=float,
         default=0.0,
-        help="Post-processing: Scale hulls from centroid. Positive = expand, negative = contract (default 0.0).",
+        help="Percentage-based scaling. 0.1 = 10%% expansion, -0.1 = 10%% contraction (default 0.0).",
     )
 
     args = parser.parse_args()
@@ -313,7 +310,7 @@ def main() -> None:
     print(f"  Mode: {'Convex Hulls' if args.approximate_mode == 'ch' else 'Bounding Boxes'}")
     print(f"  Parts: {len(parts)}")
     if args.extrude_margin != 0.0:
-        print(f"  Scaled by margin: {args.extrude_margin:+.3f} units")
+        print(f"  Extrusion: {args.extrude_margin*100:+.1f}%")
 
 
 if __name__ == "__main__":  # pragma: no cover
