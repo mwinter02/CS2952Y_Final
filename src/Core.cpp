@@ -5,6 +5,7 @@
 
 #include "Debug.h"
 #include "imgui.h"
+#include "Util.h"
 #include "Window.h"
 #include "../External/assimp/code/AssetLib/FBX/FBXExporter.h"
 
@@ -16,13 +17,27 @@
 constexpr glm::vec3 initial_camera_position = glm::vec3(0.f,  15.f, 10.f);
 constexpr glm::vec2 initial_camera_rotation = glm::vec2(-45.f, 180.0f);
 
-
+// Orbit camera controls (spherical coordinates)
+static float orbit_azimuth = 0.0f;       // Angle around Y axis (latitude, in degrees)
+static float orbit_elevation = 45.0f;    // Angle from XZ plane (longitude, in degrees)
+static float orbit_distance = 20.0f;     // Distance from origin
+constexpr glm::vec3 orbit_target = glm::vec3(0.0f, 0.0f, 0.0f);  // Always look at origin
 
 Core::Core() : camera_(std::make_shared<gl::Camera>()), light_(std::make_shared<gl::Light>())
 // , skinned_mesh_(std::make_unique<gl::SkinnedMesh>(gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx")))
  {
     light_->position = glm::vec3(0, 20, 5);
-    camera_->setPosition(initial_camera_position);
+
+    // Initialize orbit camera position using spherical coordinates
+    float azimuth_rad = glm::radians(orbit_azimuth);
+    float elevation_rad = glm::radians(orbit_elevation);
+    glm::vec3 pos = glm::vec3(
+        orbit_distance * cos(elevation_rad) * sin(azimuth_rad),
+        orbit_distance * sin(elevation_rad),
+        orbit_distance * cos(elevation_rad) * cos(azimuth_rad)
+    );
+    camera_->setPosition(pos);
+    camera_->setLook(glm::normalize(orbit_target - pos));
 
     Window::setClearColor(glm::vec3(.5f));
 
@@ -41,12 +56,21 @@ static glm::vec3 s_position;
 
 static glm::vec3 s_rotation = glm::vec3(0,0,0); // x y z rotation in degrees
 
-
-
-static glm::vec2 s_camera_rotation(-45.f, 180.0f);
 void Core::resetCamera() {
-    s_camera_rotation = initial_camera_rotation;
-    camera_->setPosition(initial_camera_position);
+    orbit_azimuth = 0.0f;
+    orbit_elevation = 45.0f;
+    orbit_distance = 20.0f;
+
+    // Update camera position using spherical coordinates
+    float azimuth_rad = glm::radians(orbit_azimuth);
+    float elevation_rad = glm::radians(orbit_elevation);
+    glm::vec3 pos = glm::vec3(
+        orbit_distance * cos(elevation_rad) * sin(azimuth_rad),
+        orbit_distance * sin(elevation_rad),
+        orbit_distance * cos(elevation_rad) * cos(azimuth_rad)
+    );
+    camera_->setPosition(pos);
+    camera_->setLook(glm::normalize(orbit_target - pos));
 }
 
 glm::mat4 getRotation() {
@@ -94,6 +118,30 @@ void Core::updateTransform() {
     transform_.setRotation(getRotation());
 }
 
+constexpr ImVec4 DECOMPOSE_BUTTON_COLOR = ImVec4(0.2f, 0.5f, 0.2f, 1.0f);
+
+void Core::guiColliderOutput() {
+    if (collider_) {
+        auto collider_path = info_.object_path;
+        auto extension = util::removeExtension(collider_path);
+        collider_path += "_collider" + extension;
+        std::string text = "Collider outputted to: " + collider_path;
+        ImGui::Text("Collider outputted to:");
+        ImGui::Text("%s", collider_path.c_str());
+    }
+}
+
+void Core::guiCoacdParams() {
+    ImGui::SliderFloat("Threshold", &params_.threshold, 0.f, 1.f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Concavity threshold. Lower values produce more accurate colliders but result in more convex pieces and is slower");
+    ImGui::SliderInt("Resolution", &params_.resolution, 100, 10000);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Surface sampling resolution. Higher values create smoother convex hulls with better surface detail");
+
+    // Custom display for Max Convex Hulls slider to show infinity symbol
+    ImGui::SliderInt("Max Convex Hulls", &params_.max_convex_hull, -1, 100, params_.max_convex_hull == -1 ? "Unlimited" : "%d");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Limits the number of generated convex hulls. Useful for performance budgets in game engines");
+
+}
 
 void Core::guiStatic() {
     if (ImGui::Button("Upload OBJ File")) {
@@ -115,11 +163,21 @@ void Core::guiStatic() {
 
     ImGui::SeparatorText("Decomposition settings");
     if (static_mesh_) {
-        ImGui::SliderFloat("Quality", &params_.quality, 0.f, 1.0f);
-        if (ImGui::Button("Decompose Mesh")) {
+        guiCoacdParams();
+        ImGui::PushStyleColor( ImGuiCol_Button, DECOMPOSE_BUTTON_COLOR);
+        if (ImGui::Button("Decompose Static Mesh")) {
             collider_.reset();
-            collider_ = std::make_unique<gl::DrawMesh>(gl::Mesh::decomposeObj(info_.object_path.c_str(), params_.quality));
+            collider_ = std::make_unique<gl::DrawMesh>(gl::Mesh::decomposeObj(info_.object_path.c_str(), params_));
             render_options_.show_collider = true;
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::Checkbox("AABB mode", &params_.aab_mode);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use axis-aligned bounding boxes instead of convex hulls. Faster physics but less accurate collision");
+
+
+        if (collider_) {
+            guiColliderOutput();
         }
     }
 }
@@ -137,8 +195,26 @@ void Core::setAnimation(int index) {
         skinned_mesh_->skeleton.resetToBindPose();
     }
 }
+bool s_bone_selection[1024] = { false };
 
-int decomp_mode = gl::BoneDecompositionMode::MULTI_CHILDREN;
+std::vector<unsigned int> Core::getCustomBones() {
+    std::vector<unsigned int> selected_bones;
+    for (int i=0; i<skinned_mesh_->skeleton.bones_.size(); i++) {
+        if (s_bone_selection[i]) {
+            selected_bones.push_back(i);
+        }
+    }
+    return selected_bones;
+}
+
+void Core::guiCustomBones() {
+    for (int i=0; i<skinned_mesh_->skeleton.bones_.size(); i++) {
+        const auto& bone = skinned_mesh_->skeleton.bones_[i];
+        ImGui::Checkbox(bone.name.c_str(), &s_bone_selection[i]);
+    }
+}
+
+int decomp_mode = gl::BoneDecompositionMode::IMPORTANT_BONES;
 void Core::guiSkeletal() {
     if (ImGui::Button("Upload FBX File")) {
         auto path = UI::openFileExplorer({{"fbx file","fbx"}});
@@ -156,18 +232,33 @@ void Core::guiSkeletal() {
     }
 
     ImGui::Text("Decomposition mode");
-    ImGui::RadioButton("Multi Children", &decomp_mode, gl::BoneDecompositionMode::MULTI_CHILDREN);
+    ImGui::RadioButton("Important Bones", &decomp_mode, gl::BoneDecompositionMode::IMPORTANT_BONES);
     ImGui::RadioButton("All Bones", &decomp_mode, gl::BoneDecompositionMode::ALL_BONES);
     ImGui::RadioButton("Custom Bones", &decomp_mode, gl::BoneDecompositionMode::CUSTOM_BONES);
 
+    if (decomp_mode == gl::BoneDecompositionMode::CUSTOM_BONES) {
+        ImGui::SeparatorText("Select Bones");
+        guiCustomBones();
+    }
 
-    if (ImGui::Button("Decompose")) {
+    ImGui::PushStyleColor( ImGuiCol_Button, DECOMPOSE_BUTTON_COLOR);
+    if (ImGui::Button("Decompose Skeletal Mesh")) {
         collider_.reset();
         collider_ = std::make_unique<gl::DrawMesh>(gl::SkeletalMesh::decomposeSkeleton(
             skinned_mesh_->skeleton, info_.object_path.c_str(),
             (gl::BoneDecompositionMode) decomp_mode,
-            {}));
+            getCustomBones(), params_.aab_mode));
         render_options_.show_collider = true;
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    ImGui::Checkbox("AABB mode", &params_.aab_mode);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use axis-aligned bounding boxes instead of convex hulls. Faster physics but less accurate collision");
+
+
+
+    if (collider_) {
+        guiColliderOutput();
     }
 
     ImGui::SeparatorText("Animations");
@@ -204,17 +295,28 @@ void Core::guiCameraControls() {
     }
 }
 
+static glm::vec2 s_ui_window_size = glm::vec2(400, 600);
 void Core::drawGUI() {
     UI::beginDraw(0,0, 400, 600);
     ImGui::Begin("Mesh Decomposer");
-    ImGui::Text("Use WASD + Space/Shift to move camera");
-    ImGui::Text("Press Enter to lock cursor");
-    ImGui::Text("Press Escape to unlock cursor");
+    ImGui::Text("Controls:");
+    ImGui::Text("  Click + Drag mouse to orbit around mesh");
+    ImGui::Text("  Scroll to zoom in/out");
+
+    s_ui_window_size = glm::vec2(ImGui::GetWindowSize().x, ImGui::GetWindowSize().y);
 
     ImGui::SeparatorText("Render Options");
     guiRenderOptions();
     ImGui::SeparatorText("Choose mesh type:");
     ImGui::Spacing();
+
+    // Style the tab bar with custom colors
+    ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));                    // Inactive tab
+    ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));            // Hovered tab
+    ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));             // Active tab (reddish)
+    ImGui::PushStyleColor(ImGuiCol_TabUnfocused, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));       // Unfocused tab
+    ImGui::PushStyleColor(ImGuiCol_TabUnfocusedActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));  // Unfocused active tab
+
     if (ImGui::BeginTabBar("MyTabBar")) {
         if (ImGui::BeginTabItem("Static .obj")) {
             guiStatic();
@@ -226,6 +328,8 @@ void Core::drawGUI() {
         }
         ImGui::EndTabBar();
     }
+
+    ImGui::PopStyleColor(5);  // Pop all 5 colors we pushed
 
     ImGui::SeparatorText("Object Transform");
     guiTransform();
@@ -295,67 +399,96 @@ void Core::draw() {
     drawGUI();
 }
 
+static bool withinUIWindow(const glm::vec2& mouse_pos) {
+    return mouse_pos.x >= 0 && mouse_pos.x <= s_ui_window_size.x+10 &&
+           mouse_pos.y >= 0 && mouse_pos.y <= s_ui_window_size.y+10;
+}
+
+void Core::onScroll(double xoffset, double yoffset) {
+    if (withinUIWindow(Window::getMousePosition())) {
+        return;
+    }
+    float mod = 1.f * yoffset;
+    orbit_distance -= mod;
+    orbit_distance = glm::clamp(orbit_distance, 1.0f, 100.0f);
+
+}
+
+
 
 static auto last_mouse_pos = Window::getMousePosition();
+static bool s_mouse_button_down_ = false;
+void Core::onMouseButton(int button, int action, int mods) {
+    const auto pos = Window::getMousePosition();
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS  && !withinUIWindow(pos)) {
+            s_mouse_button_down_ = true;
+            last_mouse_pos = pos;
+        }
+        else if (action == GLFW_RELEASE) {
+            s_mouse_button_down_ = false;
+        }
+    }
+}
+
 void Core::update(double delta_time) {
     keyInputHandler(delta_time);
 
-
-
-
-    if (!Window::isCursorVisible()) {
+    if (s_mouse_button_down_) {
         auto mouse_pos = Window::getMousePosition();
-        auto d_mouse = 0.1f*(last_mouse_pos - mouse_pos);
+        auto d_mouse = last_mouse_pos - mouse_pos;
         last_mouse_pos = mouse_pos;
-        s_camera_rotation.x += d_mouse.y;
-        s_camera_rotation.y += d_mouse.x;
-        s_camera_rotation.x = glm::clamp(s_camera_rotation.x, -89.0f, 89.0f);
 
+        // Horizontal mouse movement (X) = azimuth (latitude, around Y axis)
+        orbit_azimuth += d_mouse.x * 0.5f;  // 0.5 sensitivity
+
+        // Vertical mouse movement (Y) = elevation (longitude, angle from XZ plane)
+        orbit_elevation -= d_mouse.y * 0.5f;  // 0.5 sensitivity
+        orbit_elevation = glm::clamp(orbit_elevation, -89.0f, 89.0f);  // Prevent gimbal lock
     }
-    glm::vec3 newFront;
-    newFront.x = sin(glm::radians(s_camera_rotation.y)) * cos(glm::radians(s_camera_rotation.x));
-    newFront.y = sin(glm::radians(s_camera_rotation.x));
-    newFront.z = cos(glm::radians(s_camera_rotation.y)) * cos(glm::radians(s_camera_rotation.x));
-    auto newLook = glm::normalize(newFront);
 
-    camera_->setLook(newLook);
+    float azimuth_rad = glm::radians(orbit_azimuth);
+    float elevation_rad = glm::radians(orbit_elevation);
+    glm::vec3 pos = glm::vec3(
+        orbit_distance * cos(elevation_rad) * sin(azimuth_rad),
+        orbit_distance * sin(elevation_rad),
+        orbit_distance * cos(elevation_rad) * cos(azimuth_rad)
+    );
+    camera_->setPosition(pos);
+    camera_->setLook(glm::normalize(orbit_target - pos));
 }
 
 void Core::keyInputHandler(double delta_time) {
-    float mod = 4.f*delta_time;
+    float mod = 10.f * delta_time;  // Speed for orbit distance changes
 
-    auto camXZ = [](glm::vec3 look) {
-        auto cam_xz = look * glm::vec3(1,0,1);
-        cam_xz = glm::normalize(cam_xz);
-        return cam_xz;
-    };
+    // W/S keys adjust orbit distance (zoom in/out)
     if (Window::key(GLFW_KEY_W)) {
-        camera_->setPosition(camera_->getPosition() + mod * camXZ(camera_->getLook()));
+        orbit_distance -= mod;
+        orbit_distance = glm::max(orbit_distance, 1.0f);  // Minimum distance
     }
     if (Window::key(GLFW_KEY_S)) {
-        camera_->setPosition(camera_->getPosition() - mod * camXZ(camera_->getLook()));
+        orbit_distance += mod;
+        orbit_distance = glm::min(orbit_distance, 100.0f);  // Maximum distance
     }
+
+    // A/D keys orbit left/right (azimuth / latitude)
     if (Window::key(GLFW_KEY_A)) {
-        camera_->setPosition(camera_->getPosition() - mod * camXZ(camera_ -> getRight()));
+        orbit_azimuth -= mod * 5.0f;
     }
     if (Window::key(GLFW_KEY_D)) {
-        camera_->setPosition(camera_->getPosition() + mod * camXZ(camera_ -> getRight()));
+        orbit_azimuth += mod * 5.0f;
     }
+
+    // Space/Shift adjust elevation (longitude)
     if (Window::key(GLFW_KEY_SPACE)) {
-        camera_->setPosition(camera_->getPosition() + mod * camera_->getUp());
+        orbit_elevation += mod * 2.0f;
+        orbit_elevation = glm::min(orbit_elevation, 89.0f);
     }
     if (Window::key(GLFW_KEY_LEFT_SHIFT)) {
-        camera_->setPosition(camera_->getPosition() - mod * camera_ -> getUp());
+        orbit_elevation -= mod * 2.0f;
+        orbit_elevation = glm::max(orbit_elevation, -89.0f);
     }
 
-    if (Window::key(GLFW_KEY_ENTER)) {
-        Window::hideMouse();
-        last_mouse_pos = Window::getMousePosition();
-
-    }
-    if (Window::key(GLFW_KEY_ESCAPE)) {
-        Window::showMouse();
-    }
 }
 
 void Core::loadObject(const std::string& name) {

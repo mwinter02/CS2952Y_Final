@@ -47,8 +47,8 @@ namespace util {
 
     /**
      * Gets the stem (filename without extension) of a file
-     * @param filename - The file name
-     * @return - The stem of the file
+     * @param filename - The file name. e.g "Resources/model.obj"
+     * @return - The stem of the file. e.g "model"
      */
     static std::string getStem(const std::string& filename) {
         return std::filesystem::path(filename).stem().string();

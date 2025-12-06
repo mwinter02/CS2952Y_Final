@@ -16,7 +16,10 @@ struct ObjectInfo {
 };
 
 struct DecompParameters {
-    float quality = 0.5f;
+        float threshold = 0.5f;
+        int resolution = 2000;
+        int max_convex_hull = -1;
+        bool aab_mode = false;
 };
 
 struct RenderOptions {
@@ -51,12 +54,19 @@ public:
     ~Core() = default;
     void draw();
 
+    void onScroll(double xoffset, double yoffset);
+    void onMouseButton(int button, int action, int mods);
+
     void update(double delta_time);
 
     void keyInputHandler(double delta_time);
 private:
+    void guiColliderOutput();
+    void guiCoacdParams();
     void guiStatic();
     void setAnimation(int index);
+    std::vector<unsigned int> getCustomBones();
+    void guiCustomBones();
     void guiSkeletal();
     void guiRenderOptions();
     void guiCameraControls();

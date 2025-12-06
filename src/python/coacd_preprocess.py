@@ -82,8 +82,31 @@ def write_parts_as_obj(parts, out_path: Path) -> None:
     out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def run_coacd_on_file(input_path: Path, threshold: float = 0.05):
-    """Run CoACD on a single mesh file and return the list of parts."""
+def run_coacd_on_file(
+    input_path: Path,
+    threshold: float = 0.05,
+    max_convex_hull: int = -1,
+    preprocess_resolution: int = 50,
+    resolution: int = 2000,
+    mcts_nodes: int = 20,
+    mcts_iterations: int = 150,
+    mcts_max_depth: int = 3,
+    pca: bool = False,
+    approximate_mode: str = "ch",
+):
+    """Run CoACD on a single mesh file and return the list of parts.
+
+    Args:
+        threshold: Concavity threshold (0.01-1.0). Lower = more accurate but more parts.
+        max_convex_hull: Maximum number of convex hulls (-1 = no limit).
+        preprocess_resolution: Resolution for preprocessing. Higher = more detail.
+        resolution: Sampling resolution for manifold. Higher = more detailed hulls.
+        mcts_nodes: MCTS sampling nodes. Higher = better quality but slower.
+        mcts_iterations: MCTS iterations. Higher = better quality but slower.
+        mcts_max_depth: MCTS max depth for search.
+        pca: Use PCA for initial partitioning.
+        approximate_mode: Approximation mode - "ch" for convex hull, "box" for bounding boxes.
+    """
     mesh = trimesh.load(str(input_path), force="mesh")
 
     # Ensure we have a mesh (triangulate if needed)
@@ -93,8 +116,64 @@ def run_coacd_on_file(input_path: Path, threshold: float = 0.05):
 
     cmesh = coacd_mesh_from_trimesh(mesh)
 
-    parts = coacd.run_coacd(cmesh, threshold=threshold)
-    return parts
+    parts = coacd.run_coacd(
+        cmesh,
+        threshold=threshold,
+        max_convex_hull=max_convex_hull,
+        preprocess_resolution=preprocess_resolution,
+        resolution=resolution,
+        mcts_nodes=mcts_nodes,
+        mcts_iterations=mcts_iterations,
+        mcts_max_depth=mcts_max_depth,
+        pca=pca,
+    )
+
+    # Post-process parts based on approximate mode
+    if approximate_mode == "box":
+        # Convert each convex hull to its axis-aligned bounding box
+        box_parts = []
+        for part in parts:
+            vertices, faces = coacd_part_to_arrays(part)
+
+            # Compute AABB (axis-aligned bounding box)
+            min_bounds = vertices.min(axis=0)
+            max_bounds = vertices.max(axis=0)
+
+            # Create box vertices (8 corners)
+            box_vertices = np.array([
+                [min_bounds[0], min_bounds[1], min_bounds[2]],
+                [max_bounds[0], min_bounds[1], min_bounds[2]],
+                [max_bounds[0], max_bounds[1], min_bounds[2]],
+                [min_bounds[0], max_bounds[1], min_bounds[2]],
+                [min_bounds[0], min_bounds[1], max_bounds[2]],
+                [max_bounds[0], min_bounds[1], max_bounds[2]],
+                [max_bounds[0], max_bounds[1], max_bounds[2]],
+                [min_bounds[0], max_bounds[1], max_bounds[2]],
+            ], dtype=np.float64)
+
+            # Create box faces (12 triangles, 2 per face)
+            # All faces use counter-clockwise winding when viewed from outside
+            box_faces = np.array([
+                # Bottom face (z = min, normal pointing down -Z)
+                [0, 2, 1], [0, 3, 2],
+                # Top face (z = max, normal pointing up +Z)
+                [4, 5, 6], [4, 6, 7],
+                # Front face (y = min, normal pointing -Y)
+                [0, 1, 5], [0, 5, 4],
+                # Back face (y = max, normal pointing +Y)
+                [2, 3, 7], [2, 7, 6],
+                # Left face (x = min, normal pointing -X)
+                [0, 4, 7], [0, 7, 3],
+                # Right face (x = max, normal pointing +X)
+                [1, 2, 6], [1, 6, 5],
+            ], dtype=np.int32)
+
+            box_parts.append((box_vertices, box_faces))
+
+        return box_parts
+    else:
+        # Return convex hulls as-is
+        return parts
 
 
 def main() -> None:
@@ -116,7 +195,55 @@ def main() -> None:
         "--threshold",
         type=float,
         default=0.05,
-        help="CoACD approximation threshold (0.01–1.0, default 0.05)",
+        help="CoACD approximation threshold (0.01–1.0, default 0.05). Lower = more accurate but more parts.",
+    )
+    parser.add_argument(
+        "--max-convex-hull",
+        type=int,
+        default=-1,
+        help="Maximum number of convex hulls to generate (-1 = no limit, default -1).",
+    )
+    parser.add_argument(
+        "--preprocess-resolution",
+        type=int,
+        default=50,
+        help="Resolution for preprocessing (default 50). Higher = more detail but slower.",
+    )
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=2000,
+        help="Sampling resolution for manifold (default 2000). Higher = more detailed hulls.",
+    )
+    parser.add_argument(
+        "--mcts-nodes",
+        type=int,
+        default=20,
+        help="MCTS sampling nodes (default 20). Higher = better quality but slower.",
+    )
+    parser.add_argument(
+        "--mcts-iterations",
+        type=int,
+        default=150,
+        help="MCTS iterations (default 150). Higher = better quality but slower.",
+    )
+    parser.add_argument(
+        "--mcts-max-depth",
+        type=int,
+        default=3,
+        help="MCTS max depth for search (default 3).",
+    )
+    parser.add_argument(
+        "--pca",
+        action="store_true",
+        help="Use PCA for initial partitioning (default False).",
+    )
+    parser.add_argument(
+        "--approximate-mode",
+        type=str,
+        default="ch",
+        choices=["ch", "box"],
+        help="Approximation mode: 'ch' for convex hull (default), 'box' for axis-aligned bounding boxes.",
     )
 
     args = parser.parse_args()
@@ -128,10 +255,23 @@ def main() -> None:
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    parts = run_coacd_on_file(in_path, threshold=args.threshold)
+    parts = run_coacd_on_file(
+        in_path,
+        threshold=args.threshold,
+        max_convex_hull=args.max_convex_hull,
+        preprocess_resolution=args.preprocess_resolution,
+        resolution=args.resolution,
+        mcts_nodes=args.mcts_nodes,
+        mcts_iterations=args.mcts_iterations,
+        mcts_max_depth=args.mcts_max_depth,
+        pca=args.pca,
+        approximate_mode=args.approximate_mode,
+    )
     write_parts_as_obj(parts, out_path)
 
     print(f"Wrote CoACD decomposition OBJ for {in_path} -> {out_path}")
+    print(f"  Mode: {'Convex Hulls' if args.approximate_mode == 'ch' else 'Bounding Boxes'}")
+    print(f"  Parts: {len(parts)}")
 
 
 if __name__ == "__main__":  # pragma: no cover

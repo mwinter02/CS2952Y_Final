@@ -151,6 +151,7 @@ int Window::initializeGLFW(int width, int height) {
 
         glfwSetDropCallback(window_, dragDropCallback);
         glfwSetCursorPosCallback(window_, mousePositionCallback);
+        glfwSetMouseButtonCallback(window_, mouseButtonCallback);
         glfwSetScrollCallback(window_, scrollCallback);
         glfwSetKeyCallback(window_, keyboardCallback);
         glfwSetInputMode(window_, GLFW_STICKY_KEYS, GLFW_TRUE);
@@ -193,7 +194,9 @@ int Window::initializeGLFW(int width, int height) {
     }
 
     void Window::scrollCallback(GLFWwindow *window, double x_offset, double y_offset) {
-
+        if (core_) {
+            core_->onScroll(x_offset, y_offset);
+        }
     }
 
     void Window::cursorEnterCallback(GLFWwindow *window, int entered) {
@@ -205,7 +208,13 @@ int Window::initializeGLFW(int width, int height) {
         mouse_y_ = y_pos;
     }
 
-    void Window::dragDropCallback(GLFWwindow *window, int count, const char **paths) {
+void Window::mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+        if (core_) {
+            core_->onMouseButton(button, action, mods);
+        }
+}
+
+void Window::dragDropCallback(GLFWwindow *window, int count, const char **paths) {
 
     }
 

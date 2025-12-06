@@ -40,6 +40,7 @@ namespace gl {}
         static void scrollCallback(GLFWwindow * window, double x_offset, double y_offset);
         static void cursorEnterCallback(GLFWwindow* window, int entered);
         static void mousePositionCallback(GLFWwindow * window, double x_pos, double y_pos);
+        static void mouseButtonCallback(GLFWwindow * window, int button, int action, int mods);
         static void dragDropCallback(GLFWwindow * window, int count, const char** paths);
         static void displayFrameRate();
 

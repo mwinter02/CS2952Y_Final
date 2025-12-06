@@ -14,7 +14,7 @@ namespace gl {
     using BoneWeights = std::array<float, MAX_BONES_PER_VERTEX>;
 
     enum BoneDecompositionMode {
-        MULTI_CHILDREN,
+        IMPORTANT_BONES,
         ALL_BONES,
         CUSTOM_BONES
     };
@@ -133,8 +133,9 @@ namespace gl {
                                        const DrawMesh& collision_mesh,
                                        const aiScene* original_scene);
         static SkinnedMesh loadFbx(const char* filename);
-        static DrawMesh decomposeSkeleton(const Skeleton& skeleton,const char* filename, BoneDecompositionMode mode = BoneDecompositionMode::MULTI_CHILDREN,
-            const std::vector<unsigned int>& custom_bones = {});
+        static DrawMesh decomposeSkeleton(const Skeleton& skeleton,const char* filename,
+            BoneDecompositionMode mode = IMPORTANT_BONES,
+            const std::vector<unsigned int>& custom_bones = {}, bool aab_mode = false);
 
 
 

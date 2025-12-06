@@ -9,6 +9,7 @@
 
 #include "Texture.h"
 #include <fstream>
+#include "../Core.h"
 
 
 
@@ -60,7 +61,7 @@ namespace gl {
     constexpr unsigned int IMPORT_PRESET =  aiProcess_Triangulate |
                                             aiProcess_JoinIdenticalVertices |
                                             aiProcess_OptimizeMeshes |
-                                            aiProcess_GenSmoothNormals |
+                                            aiProcess_GenNormals |
                                             aiProcess_CalcTangentSpace |
                                             aiProcess_FlipUVs | // since OpenGL's UVs are flipped
                                             aiProcess_LimitBoneWeights; // Limit bone weights to 4 per vertex
@@ -211,21 +212,18 @@ namespace gl {
      * @param quality - A value between 0 and 1 indicating the quality of the decomposition (higher is better)
      * @return
      */
-    DrawMesh Mesh::decomposeObj(const char* file_name, float quality) {
+    DrawMesh Mesh::decomposeObj(const char* file_name, const DecompParameters& params) {
 
-        float threshold = std::clamp(1.f-quality, 0.01f, 1.f);
         std::string full_path = util::getPath(file_name);
         std::string directory = util::getDirectory(file_name);
 
-        std::string output_name = file_name;
-        if (util::removeExtension(output_name) != ".obj") {
-            debug::error("Input file must be an OBJ file for decomposition: " + full_path);
-            return DrawMesh{};
-        }
-        output_name += "_collider.obj";
+        auto stem = util::getStem(file_name);
+
+        std::string output_name = directory;
+        output_name += "/Colliders/"+ stem +"_collider.obj";
 
 
-        if (!generateObjPyScript(file_name, output_name.c_str(), threshold)) {
+        if (!generateObjPyScript(file_name, output_name.c_str(), params)) {
             debug::error("Failed to generate coacd obj file for: " + full_path);
             debug::error("Ensure CoACD + trimesh is installed, use 'pip install coacd trimesh'");
             return DrawMesh{};
@@ -250,16 +248,35 @@ namespace gl {
     }
 
 
-    bool Mesh::generateObjPyScript(const char* obj_path, const char* output_path, float threshold) {
+    bool Mesh::generateObjPyScript(
+        const char* obj_path,
+        const char* output_path,
+        const DecompParameters& params
+    ) {
         std::string obj_fs = util::getPath(obj_path);
-        std::string outpus_fs = util::getPath(output_path);
+        std::string output_fs = util::getPath(output_path);
         std::string script_fs = util::getPath("src/python/coacd_preprocess.py");
 
-        // Build command: python3 <script> <obj> <json> --threshold <value>
+        // Build command with CoACD parameters
         char cmd[4096];
+
+        std::string approximate_mode = params.aab_mode ? "box" : "ch";
+
         std::snprintf(cmd, sizeof(cmd),
-                      "python3 \"%s\" \"%s\" \"%s\" --threshold %f",
-                      script_fs.c_str(), obj_fs.c_str(), outpus_fs.c_str(), threshold);
+                      "python3 \"%s\" \"%s\" \"%s\" --threshold %f --resolution %d --approximate-mode %s",
+                      script_fs.c_str(),
+                      obj_fs.c_str(),
+                      output_fs.c_str(),
+                      params.threshold,
+                      params.resolution,
+                      approximate_mode.c_str());
+
+        // Add max-convex-hull if specified (not -1)
+        if (params.max_convex_hull > 0) {
+            char hull_arg[128];
+            std::snprintf(hull_arg, sizeof(hull_arg), " --max-convex-hull %d", params.max_convex_hull);
+            std::strncat(cmd, hull_arg, sizeof(cmd) - strlen(cmd) - 1);
+        }
 
         debug::print("Running CoACD preprocessor: ");
         debug::print(cmd);
@@ -268,7 +285,7 @@ namespace gl {
         if (ret != 0) {
             debug::print("CoACD preprocessor failed with exit code: ");
             debug::print(std::to_string(ret));
-            std::remove(outpus_fs.c_str()); // remove incomplete file
+            std::remove(output_fs.c_str()); // remove incomplete file
             return false;
         }
         return true;

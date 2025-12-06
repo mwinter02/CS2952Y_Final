@@ -209,7 +209,7 @@ namespace gl {
     constexpr unsigned int SKINNED_IMPORT_PRESET =  aiProcess_Triangulate |
                                                     aiProcess_JoinIdenticalVertices |
                                                     aiProcess_OptimizeMeshes |
-                                                    aiProcess_GenSmoothNormals |
+                                                    aiProcess_GenNormals |
                                                     aiProcess_CalcTangentSpace |
                                                     // aiProcess_PopulateArmatureData | // Create bone hierarchy
                                                     aiProcess_FlipUVs | // since OpenGL's UVs are flipped
@@ -346,7 +346,7 @@ namespace gl {
                 channel.bone_name = bone_name;
 
                 // Position keys
-                for (size_t pk = 0; pk < ai_channel->mNumPositionKeys; pk++) {
+                for (size_t pk = 1; pk < ai_channel->mNumPositionKeys; pk++) {
                     const aiVectorKey& ai_pos_key = ai_channel->mPositionKeys[pk];
                     PositionKey pos_key;
                     pos_key.time = ai_pos_key.mTime;
@@ -355,7 +355,7 @@ namespace gl {
                 }
 
                 // Rotation keys
-                for (size_t rk = 0; rk < ai_channel->mNumRotationKeys; rk++) {
+                for (size_t rk = 1; rk < ai_channel->mNumRotationKeys; rk++) {
                     const aiQuatKey& ai_rot_key = ai_channel->mRotationKeys[rk];
                     RotationKey rot_key;
                     rot_key.time = ai_rot_key.mTime;
@@ -364,7 +364,7 @@ namespace gl {
                 }
 
                 // Scale keys
-                for (size_t sk = 0; sk < ai_channel->mNumScalingKeys; sk++) {
+                for (size_t sk = 1; sk < ai_channel->mNumScalingKeys; sk++) {
                     const aiVectorKey& ai_scale_key = ai_channel->mScalingKeys[sk];
                     ScaleKey scale_key;
                     scale_key.time = ai_scale_key.mTime;
@@ -584,13 +584,18 @@ namespace gl {
         return bone_set;
     }
 
-    DrawMesh SkeletalMesh::decomposeSkeleton(const Skeleton& skeleton, const char* filename, BoneDecompositionMode mode, const std::vector<unsigned int>& custom_bones) {
+    struct AABB {
+        glm::vec3 min = glm::vec3(std::numeric_limits<float>::max());
+        glm::vec3 max = glm::vec3(std::numeric_limits<float>::lowest());
+    }; // min, max
+    DrawMesh SkeletalMesh::decomposeSkeleton(const Skeleton& skeleton, const char* filename,
+        BoneDecompositionMode mode, const std::vector<unsigned int>& custom_bones, bool aab_mode) {
         // Export collision meshes with skeleton to FBX
 
 
         BoneSet selected_bones;
         switch (mode) {
-            case MULTI_CHILDREN: {
+            case IMPORTANT_BONES: {
                 selected_bones = getBonesWithMultipleChildren(skeleton);
                 break;
             }
@@ -607,11 +612,18 @@ namespace gl {
         }
 
         std::unordered_map<unsigned int, std::vector<glm::vec3>> bone_to_meshes;
+        std::unordered_map<unsigned int, AABB> bone_aabbs;
         for (unsigned int i = 0; i < skeleton.vertices_.size(); i++) {
             const auto& vertex = skeleton.vertices_[i];
 
             for (const auto bone_id : skeleton.vertex_to_boneID_map_.at(i)) {
-                if (selected_bones.contains(bone_id)) bone_to_meshes[bone_id].push_back(vertex);
+                if (selected_bones.contains(bone_id)) {
+                    bone_to_meshes[bone_id].push_back(vertex);
+
+                    auto& aabb = bone_aabbs[bone_id];
+                    aabb.min = glm::min(aabb.min, vertex);
+                    aabb.max = glm::max(aabb.max, vertex);
+                }
             }
         }
 
@@ -622,71 +634,141 @@ namespace gl {
         int color_idx = 0;
         for (const auto bone : selected_bones) {
 
-            quickhull::QuickHull<float> qh;
-            std::vector<quickhull::Vector3<float>> points;
-            for (const auto& v : bone_to_meshes[bone]) {
-                points.emplace_back(v.x, v.y, v.z);
-            }
-            auto hull = qh.getConvexHull(points, true, false);
-
-            const auto& hullVertices = hull.getVertexBuffer();
-            const auto& hullIndices = hull.getIndexBuffer();
-
-
             std::vector<glm::vec3> positions;
             std::vector<glm::vec3> normals;
             std::vector<glm::vec2> texcoords;
             std::vector<BoneIDs> bone_ids;
             std::vector<BoneWeights> bone_weights;
 
-            positions.reserve(hullIndices.size());
-            normals.reserve(hullIndices.size());
-            texcoords.reserve(hullIndices.size());
-            bone_ids.reserve(hullIndices.size());
-            bone_weights.reserve(hullIndices.size());
+            if (aab_mode) {
+                const auto& aabb = bone_aabbs[bone];
 
-            auto toGlmVec3 = [](const quickhull::Vector3<float>& v) {
-                return glm::vec3(v.x, v.y, v.z);
-            };
+                // Define 8 box corners
+                glm::vec3 corners[8] = {
+                    {aabb.min.x, aabb.min.y, aabb.min.z}, // 0
+                    {aabb.max.x, aabb.min.y, aabb.min.z}, // 1
+                    {aabb.max.x, aabb.max.y, aabb.min.z}, // 2
+                    {aabb.min.x, aabb.max.y, aabb.min.z}, // 3
+                    {aabb.min.x, aabb.min.y, aabb.max.z}, // 4
+                    {aabb.max.x, aabb.min.y, aabb.max.z}, // 5
+                    {aabb.max.x, aabb.max.y, aabb.max.z}, // 6
+                    {aabb.min.x, aabb.max.y, aabb.max.z}, // 7
+                };
+
+                // Define box faces with CCW winding (12 triangles, 2 per face)
+                // Each face gets its own vertices with proper normals
+                struct Face {
+                    int v0, v1, v2;
+                    glm::vec3 normal;
+                };
+
+                Face faces[12] = {
+                    // Bottom face (z = min, normal -Z)
+                    {0, 2, 1, {0, 0, -1}}, {0, 3, 2, {0, 0, -1}},
+                    // Top face (z = max, normal +Z)
+                    {4, 5, 6, {0, 0, 1}}, {4, 6, 7, {0, 0, 1}},
+                    // Front face (y = min, normal -Y)
+                    {0, 1, 5, {0, -1, 0}}, {0, 5, 4, {0, -1, 0}},
+                    // Back face (y = max, normal +Y)
+                    {2, 3, 7, {0, 1, 0}}, {2, 7, 6, {0, 1, 0}},
+                    // Left face (x = min, normal -X)
+                    {0, 4, 7, {-1, 0, 0}}, {0, 7, 3, {-1, 0, 0}},
+                    // Right face (x = max, normal +X)
+                    {1, 2, 6, {1, 0, 0}}, {1, 6, 5, {1, 0, 0}},
+                };
+
+                // Build vertex data (36 vertices = 12 triangles × 3 vertices)
+                positions.reserve(36);
+                normals.reserve(36);
+                texcoords.reserve(36);
+                bone_ids.reserve(36);
+                bone_weights.reserve(36);
+
+                for (const auto& face : faces) {
+                    positions.push_back(corners[face.v0]);
+                    positions.push_back(corners[face.v1]);
+                    positions.push_back(corners[face.v2]);
+
+                    normals.push_back(face.normal);
+                    normals.push_back(face.normal);
+                    normals.push_back(face.normal);
+
+                    texcoords.push_back(glm::vec2(0.0f, 0.0f));
+                    texcoords.push_back(glm::vec2(0.0f, 0.0f));
+                    texcoords.push_back(glm::vec2(0.0f, 0.0f));
+
+                    bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
+                    bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
+                    bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
+
+                    bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
+                    bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
+                    bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
+                }
+            }
+            else {
+                quickhull::QuickHull<float> qh;
+                std::vector<quickhull::Vector3<float>> points;
+                for (const auto& v : bone_to_meshes[bone]) {
+                    points.emplace_back(v.x, v.y, v.z);
+                }
+                auto hull = qh.getConvexHull(points, true, false);
+
+                const auto& hullVertices = hull.getVertexBuffer();
+                const auto& hullIndices = hull.getIndexBuffer();
 
 
-            for (int i = 0; i < hullIndices.size(); i += 3) {
-                const auto idx0 = hullIndices[i];
-                const auto idx1 = hullIndices[i + 1];
-                const auto idx2 = hullIndices[i + 2];
-
-                // Get vertices using the indices
-                const glm::vec3 v0 = toGlmVec3(hullVertices[idx0]);
-                const glm::vec3 v1 = toGlmVec3(hullVertices[idx1]);
-                const glm::vec3 v2 = toGlmVec3(hullVertices[idx2]);
 
 
-                positions.push_back(v0);
-                positions.push_back(v1);
-                positions.push_back(v2);
+                positions.reserve(hullIndices.size());
+                normals.reserve(hullIndices.size());
+                texcoords.reserve(hullIndices.size());
+                bone_ids.reserve(hullIndices.size());
+                bone_weights.reserve(hullIndices.size());
 
-                // Calculate normal - cross product of two edges
-                glm::vec3 edge1 = v1 - v0;
-                glm::vec3 edge2 = v2 - v0;
-                glm::vec3 norm = glm::normalize(glm::cross(edge1, edge2));
+                auto toGlmVec3 = [](const quickhull::Vector3<float>& v) {
+                    return glm::vec3(v.x, v.y, v.z);
+                };
 
-                // QuickHull should give CCW winding (outward normals)
-                // If normals point inward, negate them: norm = -norm;
 
-                normals.push_back(norm);
-                normals.push_back(norm);
-                normals.push_back(norm);
+                for (int i = 0; i < hullIndices.size(); i += 3) {
+                    const auto idx0 = hullIndices[i];
+                    const auto idx1 = hullIndices[i + 1];
+                    const auto idx2 = hullIndices[i + 2];
 
-                texcoords.push_back(glm::vec2(0.0f, 0.0f));
-                texcoords.push_back(glm::vec2(0.0f, 0.0f));
-                texcoords.push_back(glm::vec2(0.0f, 0.0f));
-                bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
-                bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
-                bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
-                bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
-                bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
-                bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
+                    // Get vertices using the indices
+                    const glm::vec3 v0 = toGlmVec3(hullVertices[idx0]);
+                    const glm::vec3 v1 = toGlmVec3(hullVertices[idx1]);
+                    const glm::vec3 v2 = toGlmVec3(hullVertices[idx2]);
 
+
+                    positions.push_back(v0);
+                    positions.push_back(v1);
+                    positions.push_back(v2);
+
+                    // Calculate normal - cross product of two edges
+                    glm::vec3 edge1 = v1 - v0;
+                    glm::vec3 edge2 = v2 - v0;
+                    glm::vec3 norm = glm::normalize(glm::cross(edge1, edge2));
+
+                    // QuickHull should give CCW winding (outward normals)
+                    // If normals point inward, negate them: norm = -norm;
+
+                    normals.push_back(norm);
+                    normals.push_back(norm);
+                    normals.push_back(norm);
+
+                    texcoords.push_back(glm::vec2(0.0f, 0.0f));
+                    texcoords.push_back(glm::vec2(0.0f, 0.0f));
+                    texcoords.push_back(glm::vec2(0.0f, 0.0f));
+                    bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
+                    bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
+                    bone_ids.push_back(BoneIDs{ bone, 0, 0, 0 });
+                    bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
+                    bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
+                    bone_weights.push_back(BoneWeights{ 1.0f, 0.0f, 0.0f, 0.0f });
+
+                }
             }
             DrawShape shape = loadSkinnedShape(positions, normals, texcoords, bone_ids, bone_weights);
             DrawObject object;
@@ -700,7 +782,7 @@ namespace gl {
         auto scene = importer.ReadFile(util::getPath(filename), SKINNED_IMPORT_PRESET);
         std::string output = util::getPath(filename);
         util::removeExtension(output);
-        output += "_with_colliders.fbx";
+        output += "_collider.fbx";
         exportWithColliders(output.c_str(), skeleton, mesh, scene);
         return mesh;
     }
