@@ -8,9 +8,9 @@
 1. **Input Requirements**: The input mesh should be in a standard 3D format (OBJ and FBX are supported).
 2. **Running the Decomposition**:
    - For static meshes, use the CoACD algorithm by selecting the quality parameters and running the decomposition process.
-   - For skeletal meshes, use the select Bone hierarchy method and press decompose.
+   - For skeletal meshes, select Bone hierarchy decomposition method and press decompose.
 3. **Output**: The output will be a set of convex parts saved in the same directory as the input mesh, with filenames having "_collider" suffix.
-4. **Visualization**: Use any 3D viewer to visualize the decomposed parts.
+4. **Visualization**: You will see the collider overlayed on the current mesh in the viewer.
 
 ## Basic example
 ### Static Mesh Decomposition
