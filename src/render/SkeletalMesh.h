@@ -13,6 +13,12 @@ namespace gl {
     using BoneIDs = std::array<unsigned int, MAX_BONES_PER_VERTEX>;
     using BoneWeights = std::array<float, MAX_BONES_PER_VERTEX>;
 
+    enum BoneDecompositionMode {
+        MULTI_CHILDREN,
+        ALL_BONES,
+        CUSTOM_BONES
+    };
+
     struct Bone {
         std::string name;              // Bone name from FBX file
         unsigned int id;                        // Unique bone index
@@ -21,17 +27,20 @@ namespace gl {
         glm::mat4 local_transform;   // Local transform relative to parent bone
         glm::mat4 bind_pose_transform; // Bind pose local transform (immutable after construction)
         std::vector<unsigned int> children;     // Indices of child bones
+        bool is_virtual = false;        // For bones without weights
 
         std::unordered_map<unsigned int, float> vertex_weights; // vertex_id -> weight
 
         Bone(const std::string& bone_name, const unsigned int bone_id, const int parent,
-            const glm::mat4& offset, const glm::mat4& bind_pose_transform) :
+            const glm::mat4& offset, const glm::mat4& bind_pose_transform, bool virtual_bone = false) :
         name(bone_name),
         id(bone_id),
         parent_id(parent),
         offset_matrix(offset),
         local_transform(bind_pose_transform),
-        bind_pose_transform(bind_pose_transform) {}
+        bind_pose_transform(bind_pose_transform),
+        is_virtual(virtual_bone) {}
+
 
         void addChild(const Bone& child) {
             children.push_back(child.id);
@@ -108,7 +117,6 @@ namespace gl {
 
     struct SkinnedMesh {
         DrawMesh draw_mesh;
-        DrawMesh collision_mesh;
         Skeleton skeleton;
     };
 
@@ -125,7 +133,8 @@ namespace gl {
                                        const DrawMesh& collision_mesh,
                                        const aiScene* original_scene);
         static SkinnedMesh loadFbx(const char* filename);
-        static DrawMesh decomposeSkeleton(const Skeleton& skeleton);
+        static DrawMesh decomposeSkeleton(const Skeleton& skeleton,const char* filename, BoneDecompositionMode mode = BoneDecompositionMode::MULTI_CHILDREN,
+            const std::vector<unsigned int>& custom_bones = {});
 
 
 

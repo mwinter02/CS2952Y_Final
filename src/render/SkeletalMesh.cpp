@@ -119,14 +119,21 @@ namespace gl {
 
     std::string findRootBone(aiNode* curr_node, const std::unordered_set<std::string>& bone_map) {
         if (bone_map.contains(curr_node->mName.C_Str())) {
+            if (auto parent = curr_node->mParent) {
+                if (bone_map.contains(parent->mName.C_Str())) {
+                    // Not root, continue searching
+                    return findRootBone(parent, bone_map);
+                }
+            }
+            // No parent, or parent not a bone: this is root
             return curr_node->mName.C_Str();
         }
-        for (size_t i = 0; i < curr_node->mNumChildren; i++) {
-            auto result = findRootBone(curr_node->mChildren[i], bone_map);
-            if (!result.empty()) {
-                return result;
-            }
-        }
+        // for (size_t i = 0; i < curr_node->mNumChildren; i++) {
+        //     auto result = findRootBone(curr_node->mChildren[i], bone_map);
+        //     if (!result.empty()) {
+        //         return result;
+        //     }
+        // }
         debug::error("Failed to find root bone");
         return "";
     }
@@ -138,6 +145,23 @@ namespace gl {
 
         debug::error("Failed to find bone " + bone_name);
         return {1.0f};
+    }
+
+    void createHierarchy(Skeleton& skeleton, const aiScene* scene, const std::unordered_set<std::string>& bone_names) {
+
+        for (auto bone_name : bone_names) {
+            auto node = scene->mRootNode->FindNode(aiString(bone_name));
+            if (node && node->mParent) {
+                std::string parent_name = node->mParent->mName.C_Str();
+                if (bone_names.contains(parent_name)) {
+                    int bone_id = skeleton.bone_map_[bone_name];
+                    int parent_id = skeleton.bone_map_[parent_name];
+                    skeleton.bones_[bone_id].parent_id = parent_id;
+                    skeleton.bones_[parent_id].addChild(skeleton.bones_[bone_id]);
+                }
+            }
+        }
+
     }
 
     void constructSkeleton(Skeleton& skeleton, aiNode* curr_node, const aiScene* scene,
@@ -212,12 +236,15 @@ namespace gl {
                 }
             }
         }
-        std::string root_name = findRootBone(scene->mRootNode, bone_names);
+
+        auto start_bone = scene->mRootNode->FindNode(aiString(*bone_names.begin()));
+        std::string root_name = findRootBone(start_bone, bone_names);
         auto node = scene->mRootNode->FindNode(aiString(root_name));
         auto name = node->mParent->mName;
 
 
-        constructSkeleton(skeleton, node, scene, -1, glm::mat4(1.0f));
+        constructSkeleton(skeleton, scene->mRootNode, scene, -1, glm::mat4(1.0f));
+
         return skeleton;
     }
 
@@ -294,7 +321,7 @@ namespace gl {
 
     std::unordered_map<std::string, Animation> loadAnimations(const aiScene* scene, const Skeleton& skeleton) {
         if (!scene->HasAnimations()) return {};
-        std::unordered_map<std::string,Animation> animations_map;
+        std::unordered_map<std::string, Animation> animations_map;
         for (size_t i = 0; i < scene->mNumAnimations; i++) {
             const aiAnimation* ai_anim = scene->mAnimations[i];
 
@@ -309,7 +336,7 @@ namespace gl {
 
                 // Skip channels for bones not in skeleton
                 if (!skeleton.bone_map_.contains(bone_name)) {
-                    // debug::print("Skipping animation channel for unknown bone: " + bone_name);
+                    debug::print("Skipping animation channel for unknown bone: " + bone_name);
                     // These are often bone ends which can be used for inverse kinematics
                     // Also the root node is skipped which can be used for global transforms
                     continue;
@@ -488,16 +515,10 @@ namespace gl {
 
         }
 
-        auto collision_mesh = decomposeSkeleton(skeleton);
 
-        // Export collision meshes with skeleton to FBX
-        std::string output = util::getPath(filename);
-        util::removeExtension(output);
-        output += "_with_colliders.fbx";
-        exportWithColliders(output.c_str(), skeleton, collision_mesh, scene);
 
         skeleton.updateBoneMatrices();
-        return {mesh, collision_mesh, skeleton};
+        return {mesh, skeleton};
     }
 
 
@@ -544,33 +565,62 @@ namespace gl {
 
      */
 
-
-    DrawMesh SkeletalMesh::decomposeSkeleton(const Skeleton& skeleton) {
-
-
-        std::unordered_set<unsigned int> important_bones;
+    using BoneSet = std::unordered_set<unsigned int>;
+    BoneSet getBonesWithMultipleChildren(const Skeleton& skeleton) {
+        BoneSet selected_bones;
         for (const auto& bone : skeleton.bones_) {
             if (bone.children.size() > 1) {
-                important_bones.emplace(bone.id);
+                selected_bones.emplace(bone.id);
             }
         }
+        return selected_bones;
+    }
 
+    BoneSet getAllBones(const Skeleton& skeleton) {
+        BoneSet bone_set;
+        for (const auto& bone : skeleton.bones_) {
+            bone_set.emplace(bone.id);
+        }
+        return bone_set;
+    }
+
+    DrawMesh SkeletalMesh::decomposeSkeleton(const Skeleton& skeleton, const char* filename, BoneDecompositionMode mode, const std::vector<unsigned int>& custom_bones) {
+        // Export collision meshes with skeleton to FBX
+
+
+        BoneSet selected_bones;
+        switch (mode) {
+            case MULTI_CHILDREN: {
+                selected_bones = getBonesWithMultipleChildren(skeleton);
+                break;
+            }
+            case CUSTOM_BONES: {
+                for (const auto bone_id : custom_bones) {
+                    selected_bones.emplace(bone_id);
+                }
+                break;
+            }
+            default: case BoneDecompositionMode::ALL_BONES: {
+                selected_bones = getAllBones(skeleton);
+                break;
+            }
+        }
 
         std::unordered_map<unsigned int, std::vector<glm::vec3>> bone_to_meshes;
         for (unsigned int i = 0; i < skeleton.vertices_.size(); i++) {
             const auto& vertex = skeleton.vertices_[i];
 
             for (const auto bone_id : skeleton.vertex_to_boneID_map_.at(i)) {
-                if (important_bones.contains(bone_id)) bone_to_meshes[bone_id].push_back(vertex);
+                if (selected_bones.contains(bone_id)) bone_to_meshes[bone_id].push_back(vertex);
             }
         }
 
         DrawMesh mesh;
-        auto object_color = getRainbow(important_bones.size());
+        auto object_color = getRainbow(selected_bones.size());
         debug::print(std::to_string(bone_to_meshes.size()));
 
         int color_idx = 0;
-        for (const auto bone : important_bones) {
+        for (const auto bone : selected_bones) {
 
             quickhull::QuickHull<float> qh;
             std::vector<quickhull::Vector3<float>> points;
@@ -645,6 +695,13 @@ namespace gl {
             color_idx++;
             mesh.objects.push_back(object);
         }
+
+        Assimp::Importer importer;
+        auto scene = importer.ReadFile(util::getPath(filename), SKINNED_IMPORT_PRESET);
+        std::string output = util::getPath(filename);
+        util::removeExtension(output);
+        output += "_with_colliders.fbx";
+        exportWithColliders(output.c_str(), skeleton, mesh, scene);
         return mesh;
     }
 

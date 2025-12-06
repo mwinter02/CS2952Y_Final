@@ -23,6 +23,7 @@ namespace gl {}
     bool Window::keys_[1024] = { false };
     bool Window::cursor_visible_ = true;
     double Window::mouse_x_, Window::mouse_y_ = 0;
+    glm::vec3 Window::clear_color_ = glm::vec3(0.0f);
     Window::~Window() {
         shutDown();
     }
@@ -70,7 +71,7 @@ namespace gl {}
         glViewport(0, 0, width_, height_);
         glDisable(GL_SCISSOR_TEST);
 
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // Alpha = 1.0 for opaque background
+        glClearColor(clear_color_.x,clear_color_.y,clear_color_.z, 1.0f);  // Alpha = 1.0 for opaque background
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Reset blend state for 3D rendering
@@ -118,6 +119,10 @@ bool Window::isCursorVisible() {
 
 double Window::getCurrentTime() {
         return s_currentTime;
+}
+
+void Window::setClearColor(glm::vec3 color) {
+    clear_color_ = color;
 }
 
 int Window::initializeGLFW(int width, int height) {

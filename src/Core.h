@@ -44,6 +44,10 @@ struct Object {
 class Core {
 public:
     Core();
+    void resetCamera();
+    void guiTransform();
+    void loadNewMesh(const std::string& path);
+    void updateTransform();
     ~Core() = default;
     void draw();
 
@@ -55,6 +59,7 @@ private:
     void setAnimation(int index);
     void guiSkeletal();
     void guiRenderOptions();
+    void guiCameraControls();
     void drawGUI();
     void loadObject(const std::string& name);
     void drawCurrentObject();

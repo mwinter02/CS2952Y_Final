@@ -76,7 +76,7 @@ namespace gl {
 
     }
 
-    void Graphics::drawSkinned(const DrawMesh& draw_mesh, Skeleton& skeleton, const Transform& transform) {
+    void Graphics::drawSkinned(const DrawMesh* draw_mesh, Skeleton& skeleton, const Transform& transform) {
         const auto model_matrix = transform.getModelMatrix();
         active_shader_->setMat4("model", model_matrix);
         active_shader_->setMat3("normal", glm::transpose(glm::inverse(glm::mat3(model_matrix))));
@@ -84,7 +84,7 @@ namespace gl {
         skeleton.updateBoneMatrices();
         active_shader_->setMat4Vec("gBones", skeleton.num_bones_, skeleton.bone_matrices_);
 
-        for (const auto& [shape, material] : draw_mesh.objects) {
+        for (const auto& [shape, material] : draw_mesh->objects) {
             setMaterialUniforms(material);
             glBindVertexArray(shape.vao);
             glDrawArrays(GL_TRIANGLES, 0, 3 * shape.numTriangles);
@@ -99,7 +99,6 @@ namespace gl {
 
 
         const auto& draw_mesh = skinned_mesh->draw_mesh;
-        const auto& collision_mesh = skinned_mesh->collision_mesh;
 
         auto& skeleton = skinned_mesh->skeleton;
 
@@ -112,14 +111,6 @@ namespace gl {
             glDrawArrays(GL_TRIANGLES, 0, 3 * obj.shape.numTriangles);
             glBindVertexArray(0);
         }
-
-        for (const auto& [shape, material] : collision_mesh.objects) {
-            setMaterialUniforms(material);
-            glBindVertexArray(shape.vao);
-            glDrawArrays(GL_TRIANGLES, 0, 3 * shape.numTriangles);
-            glBindVertexArray(0);
-        }
-
     }
 
     const DrawShape* Graphics::getShape(const std::string& shape_name) {

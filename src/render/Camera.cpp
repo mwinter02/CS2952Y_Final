@@ -32,7 +32,7 @@ namespace gl {
     }
 
     void Camera::setLook(const glm::vec3 look) {
-        look_ = look;
+        look_ = glm::normalize(look);
     }
 
     glm::vec3 Camera::getLook() const {

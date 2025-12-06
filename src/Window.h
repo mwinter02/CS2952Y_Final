@@ -27,6 +27,8 @@ namespace gl {}
         static bool isCursorVisible();
         static double getCurrentTime();
 
+        static void setClearColor(glm::vec3 color);
+
     private:
         static void display();
         static int initializeGLFW(int width, int height);
@@ -46,6 +48,7 @@ namespace gl {}
         static GLFWwindow *window_;
         static int width_, height_;
         static float aspect_ratio_;
+        static glm::vec3 clear_color_;
 
         static bool keys_[1024];
         static bool cursor_visible_;

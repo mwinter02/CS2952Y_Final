@@ -13,17 +13,20 @@
 #include "render/SkeletalMesh.h"
 
 
-float getScale(const gl::DrawMesh* mesh) {
+constexpr glm::vec3 initial_camera_position = glm::vec3(0.f,  15.f, 10.f);
+constexpr glm::vec2 initial_camera_rotation = glm::vec2(-45.f, 180.0f);
 
-    glm::vec3 size = mesh->max - mesh->min;
-    float max_extent = std::max({size.x, size.y, size.z});
-    return 10.0f / max_extent;
-}
+
 
 Core::Core() : camera_(std::make_shared<gl::Camera>()), light_(std::make_shared<gl::Light>())
 // , skinned_mesh_(std::make_unique<gl::SkinnedMesh>(gl::SkeletalMesh::loadFbx("Resources/Models/walking.fbx")))
  {
-    light_->position = glm::vec3(0, 5, 0);
+    light_->position = glm::vec3(0, 20, 5);
+    camera_->setPosition(initial_camera_position);
+
+    Window::setClearColor(glm::vec3(.5f));
+
+    gl::SkeletalMesh::loadFbx("Resources/Models/Dragon/Dragon 2.5_fbx.fbx");
 
 
     // obj_mesh = gl::Mesh::loadStaticMesh("Resources/Models/sponza/sponza.obj");
@@ -32,32 +35,92 @@ Core::Core() : camera_(std::make_shared<gl::Camera>()), light_(std::make_shared<
 }
 
 
+static float s_scale;
+glm::vec2 s_scale_bounds;
+static glm::vec3 s_position;
+
+static glm::vec3 s_rotation = glm::vec3(0,0,0); // x y z rotation in degrees
+
+
+
+static glm::vec2 s_camera_rotation(-45.f, 180.0f);
+void Core::resetCamera() {
+    s_camera_rotation = initial_camera_rotation;
+    camera_->setPosition(initial_camera_position);
+}
+
+glm::mat4 getRotation() {
+    auto rotation = glm::mat4(1.0f);
+    rotation = glm::rotate(rotation, glm::radians(s_rotation.x), {1,0,0});
+    rotation = glm::rotate(rotation, glm::radians(s_rotation.y), {0,1,0});
+    rotation = glm::rotate(rotation, glm::radians(s_rotation.z), {0,0,1});
+    return rotation;
+}
+
+void updateScale(gl::DrawMesh* mesh) {
+    glm::vec3 size = mesh->max - mesh->min;
+    float max_extent = std::max({size.x, size.y, size.z});
+    auto scale = 10.0f / max_extent;
+    s_scale = scale;
+    s_scale_bounds = glm::vec2(scale * 0.1f, scale * 10.0f);
+}
+
+void Core::guiTransform() {
+    if (skinned_mesh_ || static_mesh_) {
+        ImGui::SliderFloat3("Position", glm::value_ptr(s_position), -20, 20);
+        ImGui::SameLine(); if (ImGui::Button("Reset##Position")) s_position = {0,0,0};
+
+        ImGui::SliderFloat("Scale   ", &s_scale, s_scale_bounds.x, s_scale_bounds.y);
+        ImGui::SameLine(); if (ImGui::Button("Reset##Scale")) s_scale = (s_scale_bounds.x + s_scale_bounds.y) / 10.f;
+
+        ImGui::SliderFloat3("Rotation", glm::value_ptr(s_rotation), 0, 360);
+        ImGui::SameLine(); if (ImGui::Button("Reset##Rotation")) s_rotation = {0,0,0};
+    } else {
+        ImGui::Text("Upload a mesh to see transform options.");
+    }
+
+}
+
+void Core::loadNewMesh(const std::string& path) {
+    info_.object_path = path;
+    skinned_mesh_.reset();
+    static_mesh_.reset();
+    collider_.reset();
+}
+
+void Core::updateTransform() {
+    transform_.setScale(s_scale);
+    transform_.setPosition(s_position);
+    transform_.setRotation(getRotation());
+}
 
 
 void Core::guiStatic() {
-    if (ImGui::Button("Upload File")) {
+    if (ImGui::Button("Upload OBJ File")) {
         auto path = UI::openFileExplorer({{"obj file","obj"}});
         if (!path.empty()) {
-            debug::print("Selected file: " + path);
-            info_.object_path = path;
-
-            static_mesh_.reset();
+            loadNewMesh(path);
             static_mesh_ = std::make_unique<gl::DrawMesh>(gl::Mesh::loadStaticMesh(path.c_str()));
-            transform_.setScale(getScale(static_mesh_.get()));
-            collider_.reset();
+            updateScale(static_mesh_.get());
             render_options_.is_skeletal = false;
             // Load the selected OBJ file
 
         }
     }
 
+    if (!static_mesh_) {
+        ImGui::Text("Upload Static Mesh (.obj) to see more options.");
+        return;
+    }
+
+    ImGui::SeparatorText("Decomposition settings");
     if (static_mesh_) {
+        ImGui::SliderFloat("Quality", &params_.quality, 0.f, 1.0f);
         if (ImGui::Button("Decompose Mesh")) {
             collider_.reset();
             collider_ = std::make_unique<gl::DrawMesh>(gl::Mesh::decomposeObj(info_.object_path.c_str(), params_.quality));
             render_options_.show_collider = true;
         }
-        ImGui::SliderFloat("Quality", &params_.quality, 0.f, 1.0f);
     }
 }
 
@@ -74,24 +137,37 @@ void Core::setAnimation(int index) {
         skinned_mesh_->skeleton.resetToBindPose();
     }
 }
+
+int decomp_mode = gl::BoneDecompositionMode::MULTI_CHILDREN;
 void Core::guiSkeletal() {
     if (ImGui::Button("Upload FBX File")) {
         auto path = UI::openFileExplorer({{"fbx file","fbx"}});
         if (!path.empty()) {
-            debug::print("Selected file: " + path);
-            info_.object_path = path;
-            skinned_mesh_.reset();
+            loadNewMesh(path);
             skinned_mesh_ = std::make_unique<gl::SkinnedMesh>(gl::SkeletalMesh::loadFbx(path.c_str()));
-            transform_.setScale(getScale(&skinned_mesh_->draw_mesh));
-            debug::print("Scale: " + std::to_string(transform_.getScale().x));
+            updateScale(&skinned_mesh_->draw_mesh);
             render_options_.is_skeletal = true;
-
         }
     }
 
     if (!skinned_mesh_) {
         ImGui::Text("Upload Skeletal Mesh (.fbx) to see more options.");
         return;
+    }
+
+    ImGui::Text("Decomposition mode");
+    ImGui::RadioButton("Multi Children", &decomp_mode, gl::BoneDecompositionMode::MULTI_CHILDREN);
+    ImGui::RadioButton("All Bones", &decomp_mode, gl::BoneDecompositionMode::ALL_BONES);
+    ImGui::RadioButton("Custom Bones", &decomp_mode, gl::BoneDecompositionMode::CUSTOM_BONES);
+
+
+    if (ImGui::Button("Decompose")) {
+        collider_.reset();
+        collider_ = std::make_unique<gl::DrawMesh>(gl::SkeletalMesh::decomposeSkeleton(
+            skinned_mesh_->skeleton, info_.object_path.c_str(),
+            (gl::BoneDecompositionMode) decomp_mode,
+            {}));
+        render_options_.show_collider = true;
     }
 
     ImGui::SeparatorText("Animations");
@@ -108,22 +184,37 @@ void Core::guiSkeletal() {
 }
 
 void Core::guiRenderOptions() {
-    ImGui::Separator();
-    ImGui::Text("Render Options:");
-    ImGui::Checkbox("Show Mesh", &render_options_.show_mesh);
-    ImGui::Checkbox("Show Collider", &render_options_.show_collider);
+    if (!skinned_mesh_ && !static_mesh_) {
+        ImGui::Text("Upload a mesh to see render options."); return;
+    }
+
+    ImGui::Checkbox("Show Mesh      ", &render_options_.show_mesh); ImGui::SameLine();
     ImGui::Checkbox("Wireframe Mesh", &render_options_.mesh_wireframe);
+    if (!collider_) {
+        ImGui::Text("Decompose mesh to see collider options"); return;
+    }
+    ImGui::Checkbox("Show Collider  ", &render_options_.show_collider); ImGui::SameLine();
     ImGui::Checkbox("Wireframe Collider", &render_options_.collider_wireframe);
+
+}
+
+void Core::guiCameraControls() {
+    if (ImGui::Button("Reset Camera")) {
+        resetCamera();
+    }
 }
 
 void Core::drawGUI() {
-    UI::beginDraw(0,0, 300, 200);
+    UI::beginDraw(0,0, 400, 600);
     ImGui::Begin("Mesh Decomposer");
     ImGui::Text("Use WASD + Space/Shift to move camera");
     ImGui::Text("Press Enter to lock cursor");
     ImGui::Text("Press Escape to unlock cursor");
-    ImGui::Separator();
-    ImGui::Text("Choose mesh type:");
+
+    ImGui::SeparatorText("Render Options");
+    guiRenderOptions();
+    ImGui::SeparatorText("Choose mesh type:");
+    ImGui::Spacing();
     if (ImGui::BeginTabBar("MyTabBar")) {
         if (ImGui::BeginTabItem("Static .obj")) {
             guiStatic();
@@ -136,7 +227,12 @@ void Core::drawGUI() {
         ImGui::EndTabBar();
     }
 
-    guiRenderOptions();
+    ImGui::SeparatorText("Object Transform");
+    guiTransform();
+
+    ImGui::SeparatorText("Camera Controls");
+    guiCameraControls();
+
 
     ImGui::Separator();
 
@@ -150,6 +246,7 @@ void Core::drawGUI() {
 
 static double previous_time = Window::getCurrentTime();
 void Core::drawCurrentObject() {
+    updateTransform();
     double delta_time = Window::getCurrentTime() - previous_time;
     previous_time = Window::getCurrentTime();
     if (render_options_.is_skeletal) {
@@ -162,12 +259,12 @@ void Core::drawCurrentObject() {
             }
             if (render_options_.show_mesh) {
                 glPolygonMode(GL_FRONT_AND_BACK, render_options_.mesh_wireframe ? GL_LINE : GL_FILL);
-                gl::Graphics::drawSkinned(skinned_mesh_->draw_mesh, skinned_mesh_->skeleton, transform_);
+                gl::Graphics::drawSkinned(&skinned_mesh_->draw_mesh, skinned_mesh_->skeleton, transform_);
             }
-            if (render_options_.show_collider) {
+            if (render_options_.show_collider && collider_) {
                 glDisable(GL_CULL_FACE);
                 glPolygonMode(GL_FRONT_AND_BACK, render_options_.collider_wireframe ? GL_LINE : GL_FILL);
-                gl::Graphics::drawSkinned(skinned_mesh_->collision_mesh, skinned_mesh_->skeleton, transform_);
+                gl::Graphics::drawSkinned(collider_.get(), skinned_mesh_->skeleton, transform_);
                 glEnable(GL_CULL_FACE);
             }
         }
@@ -177,8 +274,6 @@ void Core::drawCurrentObject() {
             gl::Graphics::usePhongShader();
             gl::Graphics::setCameraUniforms(camera_.get());
             gl::Graphics::setLight(*light_);
-
-
 
             if (render_options_.show_mesh) {
                 GLenum mesh_mode = render_options_.mesh_wireframe ? GL_LINE : GL_FILL;
@@ -191,11 +286,8 @@ void Core::drawCurrentObject() {
                 glPolygonMode(GL_FRONT_AND_BACK, collider_mode);
                 gl::Graphics::drawMesh(collider_.get(), transform_);
             }
-
-
         }
     }
-
 }
 
 void Core::draw() {
@@ -203,7 +295,7 @@ void Core::draw() {
     drawGUI();
 }
 
-static glm::vec2 rotation(0.0f, 0.0f);
+
 static auto last_mouse_pos = Window::getMousePosition();
 void Core::update(double delta_time) {
     keyInputHandler(delta_time);
@@ -215,21 +307,18 @@ void Core::update(double delta_time) {
         auto mouse_pos = Window::getMousePosition();
         auto d_mouse = 0.1f*(last_mouse_pos - mouse_pos);
         last_mouse_pos = mouse_pos;
-        rotation.x += d_mouse.y;
-        rotation.y += d_mouse.x;
-        rotation.x = glm::clamp(rotation.x, -89.0f, 89.0f);
+        s_camera_rotation.x += d_mouse.y;
+        s_camera_rotation.y += d_mouse.x;
+        s_camera_rotation.x = glm::clamp(s_camera_rotation.x, -89.0f, 89.0f);
 
-
-        glm::vec3 newFront;
-        newFront.x = sin(glm::radians(rotation.y)) * cos(glm::radians(rotation.x));
-        newFront.y = sin(glm::radians(rotation.x));
-        newFront.z = cos(glm::radians(rotation.y)) * cos(glm::radians(rotation.x));
-        auto newLook = glm::normalize(newFront);
-
-        camera_->setLook(newLook);
     }
+    glm::vec3 newFront;
+    newFront.x = sin(glm::radians(s_camera_rotation.y)) * cos(glm::radians(s_camera_rotation.x));
+    newFront.y = sin(glm::radians(s_camera_rotation.x));
+    newFront.z = cos(glm::radians(s_camera_rotation.y)) * cos(glm::radians(s_camera_rotation.x));
+    auto newLook = glm::normalize(newFront);
 
-
+    camera_->setLook(newLook);
 }
 
 void Core::keyInputHandler(double delta_time) {
